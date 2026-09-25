@@ -62,7 +62,9 @@ jobs:
         run: npm ci
 
       - name: Generate native iOS project (expo prebuild)
-        run: npx expo prebuild --platform ios --no-install --clean
+        run: |
+          set -o pipefail
+          npx expo prebuild --platform ios --no-install --clean 2>&1 | tee prebuild.log
 
       - name: Setup Xcode
         uses: maxim-lobanov/setup-xcode@v1
@@ -218,5 +220,7 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: ios-build-log
-          path: build.log
+          path: |
+            build.log
+            prebuild.log
           if-no-files-found: ignore
