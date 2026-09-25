@@ -74,9 +74,17 @@ jobs:
 
       - name: Resolve Xcode scheme
         run: |
-          SCHEME=$(xcodebuild -list -workspace ios/*.xcworkspace -json | node -e "let d='';process.stdin.on('data',c=>d+=c);process.stdin.on('end',()=>{const j=JSON.parse(d);console.log((j.workspace||j.project).schemes[0])});")
+          WORKSPACE=$(ls ios/*.xcworkspace | head -n 1)
+          # Lo scheme dell'app generato da prebuild coincide con il nome dell'xcodeproj
+          # (NON schemes[0]: il progetto Pods espone scheme tipo "boost" che vengono prima)
+          SCHEME=$(basename "$(ls ios/*.xcodeproj | head -n 1)" .xcodeproj)
+          if ! xcodebuild -list -workspace "$WORKSPACE" -json | grep -q "\"$SCHEME\""; then
+            echo "Scheme '$SCHEME' not found, picking first app scheme"
+            SCHEME=$(xcodebuild -list -workspace "$WORKSPACE" -json | node -e "let d='';process.stdin.on('data',c=>d+=c);process.stdin.on('end',()=>{const j=JSON.parse(d);const s=(j.workspace||j.project).schemes.filter(x=>!/^Pods|^boost$|^ReactNativeDependencies/.test(x));console.log(s[0])});")
+          fi
           echo "SCHEME_NAME=$SCHEME" >> "$GITHUB_ENV"
           echo "Using scheme: $SCHEME"
+          xcodebuild -list -workspace "$WORKSPACE"
 
       # 1) .app per il simulatore — nessuna firma coinvolta
       - name: Build simulator .app (no signing)
