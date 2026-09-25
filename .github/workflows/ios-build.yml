@@ -78,13 +78,21 @@ jobs:
           # Lo scheme dell'app generato da prebuild coincide con il nome dell'xcodeproj
           # (NON schemes[0]: il progetto Pods espone scheme tipo "boost" che vengono prima)
           SCHEME=$(basename "$(ls ios/*.xcodeproj | head -n 1)" .xcodeproj)
-          if ! xcodebuild -list -workspace "$WORKSPACE" -json | grep -q "\"$SCHEME\""; then
-            echo "Scheme '$SCHEME' not found, picking first app scheme"
-            SCHEME=$(xcodebuild -list -workspace "$WORKSPACE" -json | node -e "let d='';process.stdin.on('data',c=>d+=c);process.stdin.on('end',()=>{const j=JSON.parse(d);const s=(j.workspace||j.project).schemes.filter(x=>!/^Pods|^boost$|^ReactNativeDependencies/.test(x));console.log(s[0])});")
+          echo "Workspace: $WORKSPACE — scheme dal nome progetto: $SCHEME"
+          # Solo informativo: mostra gli schemes reali nel log
+          xcodebuild -list -workspace "$WORKSPACE" || true
+          # Se per qualche motivo lo scheme non esiste, prendi il primo non-Pods
+          LIST=$(xcodebuild -list -workspace "$WORKSPACE" 2>/dev/null || true)
+          if [ -n "$LIST" ]; then
+            if ! echo "$LIST" | awk '/Schemes:/{f=1;next} f&&NF{print $1}' | grep -qx "$SCHEME"; then
+              ALT=$(echo "$LIST" | awk '/Schemes:/{f=1;next} f&&NF{print $1}' | grep -v -E '^(Pods|boost|ReactNativeDependencies)' | head -n 1)
+              if [ -n "$ALT" ]; then
+                SCHEME="$ALT"
+              fi
+            fi
           fi
           echo "SCHEME_NAME=$SCHEME" >> "$GITHUB_ENV"
           echo "Using scheme: $SCHEME"
-          xcodebuild -list -workspace "$WORKSPACE"
 
       # 1) .app per il simulatore — nessuna firma coinvolta
       - name: Build simulator .app (no signing)
