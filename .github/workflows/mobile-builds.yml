@@ -101,18 +101,24 @@ jobs:
       - name: Install pods
         run: pod install --project-directory=ios
 
+      - name: Resolve Xcode scheme
+        run: |
+          SCHEME=$(xcodebuild -list -workspace ios/*.xcworkspace -json | node -e "let d='';process.stdin.on('data',c=>d+=c);process.stdin.on('end',()=>{const j=JSON.parse(d);console.log((j.workspace||j.project).schemes[0])});")
+          echo "SCHEME_NAME=$SCHEME" >> "$GITHUB_ENV"
+          echo "Using scheme: $SCHEME"
+
       # 1) .app per il simulatore — nessuna firma coinvolta
       - name: Build simulator .app (no signing)
         run: |
           set -o pipefail
           xcodebuild \
             -workspace ios/*.xcworkspace \
-            -scheme cineflash \
+            -scheme "$SCHEME_NAME" \
             -configuration Release \
             -sdk iphonesimulator \
             -derivedDataPath build \
             CODE_SIGNING_ALLOWED=NO CODE_SIGN_IDENTITY="" \
-            | tee build.log | xcpretty || exit 1
+            2>&1 | tee build.log | xcpretty || exit 1
 
       - name: Zip simulator .app
         run: |
@@ -126,12 +132,12 @@ jobs:
           set -o pipefail
           xcodebuild \
             -workspace ios/*.xcworkspace \
-            -scheme cineflash \
+            -scheme "$SCHEME_NAME" \
             -configuration Release \
             -sdk iphoneos \
             -derivedDataPath build \
             CODE_SIGNING_ALLOWED=NO CODE_SIGN_IDENTITY="" \
-            | tee -a build.log | xcpretty || exit 1
+            2>&1 | tee -a build.log | xcpretty || exit 1
 
       # 3a) Firma opzionale con certificato dai secrets
       - name: Import certificate and sign (optional)
