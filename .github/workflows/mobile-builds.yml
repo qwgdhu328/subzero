@@ -122,9 +122,16 @@ jobs:
 
       - name: Zip simulator .app
         run: |
+          set -euo pipefail
+          mkdir -p out
           APP_PATH=$(find build/Build/Products -name "*.app" -type d | head -n 1)
-          cd "$(dirname "$APP_PATH")"
-          zip -qry "${GITHUB_WORKSPACE}/subzero-simulator.zip" "$(basename "$APP_PATH")"
+          if [ -z "$APP_PATH" ]; then
+            echo "::error::No .app found in build products"
+            find build/Build/Products -maxdepth 3 -print
+            exit 1
+          fi
+          echo "Zipping: $APP_PATH"
+          ditto -c -k --sequesterRsrc --keepParent "$APP_PATH" "out/subzero-simulator.zip"
 
       # 2) Build device unsigned
       - name: Build device app (no signing)
@@ -189,19 +196,17 @@ jobs:
       - name: Package unsigned IPA
         if: inputs.sign_ios != true
         run: |
-          mkdir -p ipa/Payload
+          mkdir -p ipa/Payload out
           cp -R build/Build/Products/Release-iphoneos/*.app ipa/Payload/
-          cd ipa
-          zip -qry ../subzero-unsigned.ipa Payload
+          ditto -c -k --sequesterRsrc --keepParent ipa/Payload out/subzero-unsigned.ipa
 
       # 3c) Package IPA firmata
       - name: Package signed IPA
         if: inputs.sign_ios == true
         run: |
-          mkdir -p ipa/Payload
+          mkdir -p ipa/Payload out
           cp -R build/Build/Products/Release-iphoneos/*.app ipa/Payload/
-          cd ipa
-          zip -qry ../subzero-signed.ipa Payload
+          ditto -c -k --sequesterRsrc --keepParent ipa/Payload out/subzero-signed.ipa
 
       - name: Verify signature (signed only)
         if: inputs.sign_ios == true
@@ -214,8 +219,8 @@ jobs:
         with:
           name: ios-${{ inputs.sign_ios == true && 'signed' || 'unsigned' }}
           path: |
-            subzero-simulator.zip
-            subzero-*.ipa
+            out/subzero-simulator.zip
+            out/subzero-*.ipa
           if-no-files-found: error
 
       - name: Upload build log on failure
