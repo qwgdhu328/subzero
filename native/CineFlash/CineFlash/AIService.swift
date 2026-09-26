@@ -198,10 +198,14 @@ enum AIService {
                 .prefix(8)
             if paragraphs.isEmpty { continue }
 
+            let rewrittenTitle = parsed.title?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+            let finalTitle = rewrittenTitle.isEmpty ? item.title : String(rewrittenTitle.prefix(120))
+            let standfirst = String((parsed.standfirst ?? "").trimmingCharacters(in: .whitespacesAndNewlines).prefix(200))
+
             return AiArticle(
                 id: item.id,
-                title: String(parsed.title?.trimmingCharacters(in: .whitespacesAndNewlines).prefix(120) ?? item.title),
-                standfirst: String((parsed.standfirst ?? "").trimmingCharacters(in: .whitespacesAndNewlines).prefix(200)),
+                title: finalTitle,
+                standfirst: standfirst,
                 paragraphs: Array(paragraphs),
                 images: images,
                 source: item.source,

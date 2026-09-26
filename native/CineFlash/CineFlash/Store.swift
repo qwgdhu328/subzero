@@ -155,13 +155,13 @@ enum Store {
 
     // MARK: Salvati / watchlist / promemoria
 
-    static func loadSavedNews() -> [SavedNewsEntry] { load([SavedNewsEntry].self, keySavedNews) }
+    static func loadSavedNews() -> [SavedNewsEntry] { load([SavedNewsEntry].self, keySavedNews) ?? [] }
     static func saveSavedNews(_ list: [SavedNewsEntry]) { save(list, keySavedNews) }
 
-    static func loadWatchlist() -> [WatchlistEntry] { load([WatchlistEntry].self, keyWatchlist) }
+    static func loadWatchlist() -> [WatchlistEntry] { load([WatchlistEntry].self, keyWatchlist) ?? [] }
     static func saveWatchlist(_ list: [WatchlistEntry]) { save(list, keyWatchlist) }
 
-    static func loadReminders() -> [ReleaseReminder] { load([ReleaseReminder].self, keyReminders) }
+    static func loadReminders() -> [ReleaseReminder] { load([ReleaseReminder].self, keyReminders) ?? [] }
     static func saveReminders(_ list: [ReleaseReminder]) { save(list, keyReminders) }
 
     static func toggleSaved(_ item: NewsItem) -> Bool {
@@ -207,7 +207,7 @@ enum Store {
 
     // MARK: Storia di lettura
 
-    static func loadReadHistory() -> [String] { load([String].self, keyReadHistory) }
+    static func loadReadHistory() -> [String] { load([String].self, keyReadHistory) ?? [] }
     static func markRead(_ id: String) {
         var list = loadReadHistory()
         if list.contains(id) { return }

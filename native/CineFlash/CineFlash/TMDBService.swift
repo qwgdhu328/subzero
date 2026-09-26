@@ -66,17 +66,20 @@ enum TMDBService {
 
     static func fetchNowPlaying(apiKey: String) async throws -> [Movie] {
         let d = try await get("/movie/now_playing", apiKey: apiKey)
-        return try JSONDecoder().decode(ListResponse.self, from: d).results.map(mapMovie) ?? []
+        let resp = try JSONDecoder().decode(ListResponse.self, from: d)
+        return (resp.results ?? []).map(mapMovie)
     }
 
     static func fetchUpcoming(apiKey: String) async throws -> [Movie] {
         let d = try await get("/movie/upcoming", apiKey: apiKey)
-        return try JSONDecoder().decode(ListResponse.self, from: d).results.map(mapMovie) ?? []
+        let resp = try JSONDecoder().decode(ListResponse.self, from: d)
+        return (resp.results ?? []).map(mapMovie)
     }
 
     static func fetchPopular(apiKey: String) async throws -> [Movie] {
         let d = try await get("/movie/popular", apiKey: apiKey)
-        return try JSONDecoder().decode(ListResponse.self, from: d).results.map(mapMovie) ?? []
+        let resp = try JSONDecoder().decode(ListResponse.self, from: d)
+        return (resp.results ?? []).map(mapMovie)
     }
 
     private static func mapMovie(_ r: RawMovie) -> Movie {
@@ -216,8 +219,6 @@ enum ItunesService {
     static func findMovieFromNewsTitle(_ rawTitle: String, country: String = "it") async -> ParsedMovie? {
         let cleaned = rawTitle.lowercased()
             .replacingOccurrences(of: "[^a-zàèéìòù0-9\\s:]", with: " ", options: .regularExpression)
-        let digits = /^[0-9]+$/
-        let articles = /^(il|lo|la|gli|le|un|una|di|da|che|per|con|su|in|del|della|dei|delle|al|alla|ai|agli|e|ed)$/
         let tokens = cleaned
             .components(separatedBy: .whitespacesAndNewlines)
             .map { $0.trimmingCharacters(in: .punctuationCharacters) }
@@ -225,8 +226,8 @@ enum ItunesService {
             .filter { w in
                 w.count >= 3
                     && !stopWords.contains(w)
-                    && digits.wholeMatch(in: w) == nil
-                    && articles.wholeMatch(in: w) == nil
+                    && w.range(of: "^[0-9]+$", options: .regularExpression) == nil
+                    && w.range(of: "^(il|lo|la|gli|le|un|una|di|da|che|per|con|su|in|del|della|dei|delle|al|alla|ai|agli|e|ed)$", options: .regularExpression) == nil
             }
         guard !tokens.isEmpty else { return nil }
 

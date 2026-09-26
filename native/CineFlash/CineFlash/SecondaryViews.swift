@@ -398,7 +398,7 @@ struct PermissionsView: View {
                         Text("CineFlash usa le notifiche locali solo per prevendite, nuove notizie e promemoria di uscita. Nessun push da server.")
                             .font(Theme.ui(13)).foregroundColor(Theme.textDim)
                         GhostButton(label: "Attiva le notifiche") {
-                            UNUserNotificationCenter.current().requestAuthorization(options: [.alert, .sound, .badge]) { granted, _, _ in
+                            UNUserNotificationCenter.current().requestAuthorization(options: [.alert, .sound, .badge]) { granted, _ in
                                 Task { @MainActor in
                                     notifStatus = granted ? "attive" : "negate"
                                 }
