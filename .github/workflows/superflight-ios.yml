@@ -22,20 +22,24 @@ jobs:
 
   ios-build:
     name: App iOS (Xcode + Metal)
-    runs-on: macos-14
+    runs-on: macos-15
     steps:
       - uses: actions/checkout@v4
+      - name: Seleziona Xcode latest stable (formato progetto 77 richiede Xcode 16+)
+        uses: maxim-lobanov/setup-xcode@v1
+        with:
+          xcode-version: latest-stable
       - name: Installa XcodeGen
         run: brew install xcodegen
       - name: Genera progetto Xcode
         working-directory: superflight
         run: xcodegen generate
-      - name: Build (iPhone 15 Pro simulator)
+      - name: Build (simulatore iOS)
         working-directory: superflight
         run: |
           set -o pipefail
           xcodebuild -project SuperFlight.xcodeproj -scheme SuperFlight \
-            -destination 'platform=iOS Simulator,name=iPhone 15 Pro' \
+            -destination 'generic/platform=iOS Simulator' \
             -configuration Debug build CODE_SIGNING_ALLOWED=NO | tail -40
       - name: Risultato
-        run: echo "✅ Build iOS completata — il motore C++ gira su dispositivo con Metal"
+        run: echo "Build iOS completata - il motore C++ gira su dispositivo con Metal"
