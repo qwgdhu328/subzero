@@ -1,5 +1,7 @@
 # ✈️ SuperFlight
 
+[![iOS Build (SuperFlight)](https://github.com/qwgdhu328/subzero/actions/workflows/superflight-ios.yml/badge.svg)](https://github.com/qwgdhu328/subzero/actions/workflows/superflight-ios.yml)
+
 Gioco **3D di volo** stile supereroe: voli tra i grattacieli di una città infinita, attraversa gli **anelli** per punti e boost, evita gli edifici.
 
 **Architettura**: motore di gioco in **C++17 puro** (fisica, città procedurale, collisioni, particelle) + shell **Swift/Metal** per il rendering 3D su iOS. Le prestazioni critiche sono tutte in C++; Swift fa solo da ponte e disegna.
