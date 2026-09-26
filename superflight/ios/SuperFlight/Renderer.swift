@@ -33,7 +33,7 @@ final class Renderer: NSObject, MTKViewDelegate {
     private var glowCapacity = 256
 
     private var uniforms = FlyUniforms(
-        viewProj: simd_float4x4(1), cameraPos: .zero, time: 0)
+        viewProj: matrix_identity_float4x4, cameraPos: .zero, time: 0)
 
     init(metalKitView: MTKView) {
         device = metalKitView.device!

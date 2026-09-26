@@ -32,7 +32,7 @@ final class GameViewController: UIViewController {
     private var renderer: Renderer!
     private var gameView: GameView!
     private var hud: HUDView!
-    private let touch = TouchController(sceneView: nil)
+    private let touch = TouchController()
 
     override var prefersStatusBarHidden: Bool { true }
     override var supportedInterfaceOrientations: UIInterfaceOrientationMask { .landscape }
