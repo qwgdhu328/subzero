@@ -108,14 +108,14 @@ struct EyebrowText: View {
 struct ScreenHeader<Right: View>: View {
     let eyebrow: String
     let title: String
-    var subtitle: String? = nil
+    var subtitle: String?
     var right: Right
 
-    init(eyebrow: String, title: String, subtitle: String? = nil, @ViewBuilder right: () -> Right) {
+    init(eyebrow: String, title: String, subtitle: String? = nil, right: Right) {
         self.eyebrow = eyebrow
         self.title = title
         self.subtitle = subtitle
-        self.right = right()
+        self.right = right
     }
 
     var body: some View {
@@ -140,7 +140,7 @@ struct ScreenHeader<Right: View>: View {
 
 extension ScreenHeader where Right == EmptyView {
     init(eyebrow: String, title: String, subtitle: String? = nil) {
-        self.init(eyebrow: eyebrow, title: title, subtitle: subtitle, right: { EmptyView() })
+        self.init(eyebrow: eyebrow, title: title, subtitle: subtitle, right: EmptyView())
     }
 }
 
