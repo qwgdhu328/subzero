@@ -109,7 +109,7 @@ final class Renderer: NSObject, MTKViewDelegate {
                    Int32(view.drawableSize.height))
 
         // punteggio best per il restart
-        bestScore = max(bestScore, fly_best())
+        bestScore = max(bestScore, Int(fly_best()))
 
         guard let drawable = view.currentDrawable,
               let rpd = view.currentRenderPassDescriptor,

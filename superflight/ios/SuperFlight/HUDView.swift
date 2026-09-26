@@ -135,6 +135,6 @@ final class HUDView: UIView {
             menuPanel.isHidden = false
             finalScore.text = "Punteggio: \(fly_score())  ·  Anelli: \(fly_rings())"
         }
-        hintLabel.isHidden = (state != 1) || (fly_time() > 6)
+        hintLabel.isHidden = (state != 1) || (fly_time() > 6.0)
     }
 }
