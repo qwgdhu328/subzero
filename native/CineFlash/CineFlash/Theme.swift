@@ -69,6 +69,12 @@ extension Color {
 
     /// Colore con alpha (equivalente di theme.colors.x + "1A").
     func alpha(_ v: Double) -> Color { opacity(v) }
+
+    /// Colore come sfondo con angoli arrotondati: `Color.cornerRadius` non
+    /// esiste in SwiftUI, quindi lo aggiungiamo come vista riempita.
+    func cornerRadius(_ radius: CGFloat) -> some View {
+        RoundedRectangle(cornerRadius: radius).fill(self)
+    }
 }
 
 // MARK: - Componenti condivisi di stile

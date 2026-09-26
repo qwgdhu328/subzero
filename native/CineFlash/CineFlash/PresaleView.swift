@@ -181,7 +181,7 @@ struct PresaleView: View {
 
     private var sectionsView: some View {
         VStack(alignment: .leading, spacing: 0) {
-            ForEach(sections, id: \.label) { sec in
+            ForEach(Array(sections.enumerated()), id: \.offset) { _, sec in
                 HStack(spacing: 8) {
                     Text(sec.label)
                         .font(.system(size: 11, weight: .heavy)).kerning(2.5)
@@ -221,11 +221,9 @@ struct PresaleView: View {
     }
 
     private func openDetail(_ m: Movie) {
-        var d = DetailMovie(movie: m, trailerUrl: nil, runtime: nil, genres: [],
-                            itunesUrl: nil, previewUrl: nil, longDescription: nil,
-                            needsTmdb: true, articleUrl: nil, articleSource: nil)
-        detail = d
-        _ = d
+        detail = DetailMovie(movie: m, trailerUrl: nil, runtime: nil, genres: [],
+                             itunesUrl: nil, previewUrl: nil, longDescription: nil,
+                             needsTmdb: true, articleUrl: nil, articleSource: nil)
         if let key = app.settings.tmdbApiKey {
             Task {
                 if let det = try? await TMDBService.fetchMovieDetails(apiKey: key, movieId: m.id) {

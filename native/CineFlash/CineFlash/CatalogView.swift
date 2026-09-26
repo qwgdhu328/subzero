@@ -106,8 +106,8 @@ struct CatalogView: View {
             if showTabs {
                 ChipRow {
                     FilterChip(label: "📀 Includi già usciti", active: includeReleased) { includeReleased.toggle() }
-                    ForEach(sortChips, id: \.0) { key, label in
-                        FilterChip(label: label, active: sortBy == key) { sortBy = key }
+                    ForEach(sortChips) { chip in
+                        FilterChip(label: chip.label, active: sortBy == chip.key) { sortBy = chip.key }
                     }
                 }
                 ChipRow {
@@ -134,8 +134,15 @@ struct CatalogView: View {
         .padding(.top, 8)
     }
 
-    private var sortChips: [(SortKey, String)] {
-        [(.none, "•"), (.vote, "⭐ Voto"), (.date, "📅 Uscita"), (.title, "A–Z")]
+    private var sortChips: [SortChip] {
+        [SortChip(key: .none, label: "•"), SortChip(key: .vote, label: "⭐ Voto"),
+         SortChip(key: .date, label: "📅 Uscita"), SortChip(key: .title, label: "A–Z")]
+    }
+
+    private struct SortChip: Identifiable {
+        let key: SortKey
+        let label: String
+        var id: SortKey { key }
     }
 
     private var visibleTabs: [TabKey] {
