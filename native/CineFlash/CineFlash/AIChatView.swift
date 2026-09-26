@@ -194,6 +194,10 @@ struct AITabView: View {
     }
 }
 
+extension Notification.Name {
+    static let aiSeed = Notification.Name("cineflash.aiSeed")
+}
+
 // MARK: - Pagina AI con contesto
 
 struct AIChatView: View {
@@ -319,7 +323,7 @@ struct OnboardingView: View {
     }
 }
 
-// MARK: - Articolo (foglio WebView semplificato)
+// MARK: - Articolo (lettura con versione AI se disponibile)
 
 struct ArticleView: View {
     let item: NewsItem
@@ -330,37 +334,9 @@ struct ArticleView: View {
         ScrollView {
             VStack(alignment: .leading, spacing: 14) {
                 if let ai = aiArticle {
-                    if let urlString = ai.images.first, let url = URL(string: urlString) {
-                        AsyncImage(url: url) { phase in
-                            if let i = phase.image { i.resizable().aspectRatio(contentMode: .fill) }
-                        }
-                        .frame(height: 200)
-                        .clipShape(RoundedRectangle(cornerRadius: Theme.radiusMd))
-                    }
-                    Badge(label: "AI · \(ai.source)", tone: Theme.accent)
-                    Text(ai.title).font(Theme.serif(24)).foregroundColor(Theme.text)
-                    Text(ai.standfirst)
-                        .font(Theme.ui(15, .semibold)).foregroundColor(Theme.textDim).lineSpacing(3)
-                    ForEach(Array(ai.paragraphs.enumerated()), id: \.offset) { _, p in
-                        Text(p).font(Theme.ui(16)).foregroundColor(Theme.text).lineSpacing(6)
-                    }
-                    if let src = ai.sourceUrl.flatMap(URL.init) {
-                        Link("Leggi l'originale su \(ai.source) →", destination: src)
-                            .font(Theme.ui(13, .bold)).foregroundColor(Theme.accent)
-                    }
+                    AiArticleBody(article: ai)
                 } else {
-                    Text(item.source.uppercased())
-                        .font(.system(size: 10, weight: .heavy)).kerning(0.8)
-                        .foregroundColor(Theme.accent)
-                    Text(item.title).font(Theme.serif(24)).foregroundColor(Theme.text)
-                    if !item.summary.isEmpty {
-                        Text(item.summary).font(Theme.ui(16)).foregroundColor(Theme.textDim).lineSpacing(5)
-                    }
-                    ProgressView("Carico l'articolo…").tint(Theme.accent).padding(.top, 20)
-                    if let link = URL(string: item.link) {
-                        Link("Apri l'articolo originale →", destination: link)
-                            .font(Theme.ui(13, .bold)).foregroundColor(Theme.accent)
-                    }
+                    OriginalArticleBody(item: item)
                 }
             }
             .padding(Theme.pad)
@@ -370,6 +346,59 @@ struct ArticleView: View {
         .navigationBarTitleDisplayMode(.inline)
         .task {
             aiArticle = Store.loadAiArticles()[item.id]
+        }
+    }
+}
+
+private struct AiArticleBody: View {
+    let article: AiArticle
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 14) {
+            if let urlString = article.images.first, let url = URL(string: urlString) {
+                AsyncImage(url: url) { phase in
+                    if let img = phase.image {
+                        img.resizable().aspectRatio(contentMode: .fill)
+                    } else {
+                        Theme.surfaceAlt
+                    }
+                }
+                .frame(height: 200)
+                .clipShape(RoundedRectangle(cornerRadius: Theme.radiusMd))
+            }
+            Badge(label: "AI · \(article.source)", tone: Theme.accent)
+            Text(article.title)
+                .font(Theme.serif(24)).foregroundColor(Theme.text)
+            Text(article.standfirst)
+                .font(Theme.ui(15, .semibold)).foregroundColor(Theme.textDim).lineSpacing(3)
+            ForEach(Array(article.paragraphs.enumerated()), id: \.offset) { _, p in
+                Text(p).font(Theme.ui(16)).foregroundColor(Theme.text).lineSpacing(6)
+            }
+            if let src = URL(string: article.sourceUrl) {
+                Link("Leggi l'originale su \(article.source) →", destination: src)
+                    .font(Theme.ui(13, .bold)).foregroundColor(Theme.accent)
+            }
+        }
+    }
+}
+
+private struct OriginalArticleBody: View {
+    let item: NewsItem
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 14) {
+            Text(item.source.uppercased())
+                .font(.system(size: 10, weight: .heavy)).kerning(0.8)
+                .foregroundColor(Theme.accent)
+            Text(item.title).font(Theme.serif(24)).foregroundColor(Theme.text)
+            if !item.summary.isEmpty {
+                Text(item.summary).font(Theme.ui(16)).foregroundColor(Theme.textDim).lineSpacing(5)
+            }
+            ProgressView("Carico l'articolo…").tint(Theme.accent).padding(.top, 20)
+            if let link = URL(string: item.link) {
+                Link("Apri l'articolo originale →", destination: link)
+                    .font(Theme.ui(13, .bold)).foregroundColor(Theme.accent)
+            }
         }
     }
 }

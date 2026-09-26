@@ -310,7 +310,7 @@ struct PosterView: View {
     var corner: CGFloat = Theme.radiusSm
 
     var body: some View {
-        AsyncImage(url: url.flatMap(URL.init)) { phase in
+        AsyncImage(url: url.flatMap({ URL(string: $0) })) { phase in
             switch phase {
             case .success(let img):
                 img.resizable().aspectRatio(contentMode: .fill)

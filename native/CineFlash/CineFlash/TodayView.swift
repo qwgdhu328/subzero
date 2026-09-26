@@ -214,7 +214,7 @@ struct NewsRow: View {
 
     var body: some View {
         HStack(alignment: .center, spacing: 11) {
-            AsyncImage(url: (item.imageUrl ?? ai?.images.first).flatMap(URL.init)) { phase in
+            AsyncImage(url: (item.imageUrl ?? ai?.images.first).flatMap({ URL(string: $0) })) { phase in
                 if let img = phase.image {
                     img.resizable().aspectRatio(contentMode: .fill)
                 } else {

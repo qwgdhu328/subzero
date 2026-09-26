@@ -136,7 +136,7 @@ struct UpcomingRow: View {
 
     var body: some View {
         HStack(spacing: 12) {
-            AsyncImage(url: item.imageUrl.flatMap(URL.init)) { phase in
+            AsyncImage(url: item.imageUrl.flatMap({ URL(string: $0) })) { phase in
                 if let img = phase.image {
                     img.resizable().aspectRatio(contentMode: .fill)
                 } else {

@@ -393,11 +393,11 @@ struct MovieDetailSheet: View {
                         Spacer()
                     }
 
-                    if let trailer = movie.trailerUrl.flatMap(YouTubeSupport.videoID) {
+                    if let trailer = movie.trailerUrl.flatMap({ YouTubeSupport.videoID($0) }) {
                         YouTubeEmbed(videoID: trailer)
                             .frame(height: 200)
                             .clipShape(RoundedRectangle(cornerRadius: Theme.radiusSm))
-                    } else if let mp4 = movie.previewUrl.flatMap(URL.init) {
+                    } else if let mp4str = movie.previewUrl, let mp4 = URL(string: mp4str) {
                         Text("▶️ Trailer disponibile (anteprima Apple)")
                             .font(Theme.ui(12)).foregroundColor(Theme.textDim)
                         Link(destination: mp4) {
@@ -423,7 +423,7 @@ struct MovieDetailSheet: View {
                                 UIApplication.shared.open(url)
                             }
                         }
-                        if let itunes = movie.itunesUrl.flatMap(URL.init) {
+                        if let itunesStr = movie.itunesUrl, let itunes = URL(string: itunesStr) {
                             Link(destination: itunes) {
                                 Text("🍎 Apri in iTunes Store")
                                     .font(Theme.ui(14, .semibold)).foregroundColor(Theme.text)
