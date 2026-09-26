@@ -71,7 +71,7 @@ jobs:
           fi
           echo "Packaging: $APP_PATH"
           cp -R "$APP_PATH" ipa/Payload/
-          ditto -c -k --sequesterRsrc ipa/Payload out/SuperFlight-unsigned.ipa
+          ditto -c -k --sequesterRsrc --keepParent ipa/Payload out/SuperFlight-unsigned.ipa
           echo "IPA creata: $(du -h out/SuperFlight-unsigned.ipa | cut -f1)"
       - name: Salva log completo
         if: always()
