@@ -91,23 +91,19 @@ enum TMDBService {
     }
 
     static func fetchMovieDetails(apiKey: String, movieId: Int) async throws -> Details {
-        async let det: ListResponse = get("/movie/\(movieId)", apiKey: apiKey).decode()
-        async let vids: ListResponse = get("/movie/\(movieId)/videos", apiKey: apiKey).decode()
-        let (d, v) = try await (det, vids)
-        let trailer = (v.results ?? []).first { raw in
+        async let detData = get("/movie/\(movieId)", apiKey: apiKey)
+        async let vidData = get("/movie/\(movieId)/videos", apiKey: apiKey)
+        let (d, v) = try await (detData, vidData)
+        let detail = try JSONDecoder().decode(RawMovie.self, from: d)
+        let videos = try JSONDecoder().decode(ListResponse.self, from: v)
+        let trailer = (videos.results ?? []).first { raw in
             (raw.site == "YouTube") && (raw.type == "Trailer" || raw.type == "Teaser")
         }
         return Details(
             trailerUrl: trailer?.key.map { "https://www.youtube.com/watch?v=\($0)" },
-            runtime: d.results?.first?.runtime,
-            genres: (d.results?.first?.genres ?? []).map(\.name)
+            runtime: detail.runtime,
+            genres: (detail.genres ?? []).map(\.name)
         )
-    }
-}
-
-private extension Data {
-    func decode<T: Decodable>() throws -> T {
-        try JSONDecoder().decode(T.self, from: self)
     }
 }
 

@@ -128,20 +128,19 @@ enum CinemasService {
 
     /// Posizione corrente (se il permesso è concesso), null altrimenti.
     static func currentLocation() async -> CLLocation? {
+        final class Delegate: NSObject, CLLocationManagerDelegate, @unchecked Sendable {
+            let cont: CheckedContinuation<CLLocation?, Never>
+            init(_ cont: CheckedContinuation<CLLocation?, Never>) { self.cont = cont }
+            func locationManager(_ manager: CLLocationManager, didUpdateLocations locations: [CLLocation]) {
+                cont.resume(returning: locations.last)
+            }
+            func locationManager(_ manager: CLLocationManager, didFailWithError error: Error) {
+                cont.resume(returning: nil)
+            }
+        }
         let locator = CLLocationManager()
         locator.requestWhenInUseAuthorization()
-        // Lettura best-effort della posizione corrente
         return await withCheckedContinuation { cont in
-            class Delegate: NSObject, CLLocationManagerDelegate, @unchecked Sendable {
-                let cont: CheckedContinuation<CLLocation?, Never>
-                init(_ cont: CheckedContinuation<CLLocation?, Never>) { self.cont = cont }
-                func locationManager(_ manager: CLLocationManager, didUpdateLocations locations: [CLLocation]) {
-                    cont.resume(returning: locations.last)
-                }
-                func locationManager(_ manager: CLLocationManager, didFailWithError error: Error) {
-                    cont.resume(returning: nil)
-                }
-            }
             let delegate = Delegate(cont)
             locator.delegate = delegate
             locator.desiredAccuracy = kCLLocationAccuracyHundredMeters

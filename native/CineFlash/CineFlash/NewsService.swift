@@ -30,17 +30,35 @@ enum NewsService {
 
     private static func decodeEntities(_ s: String) -> String {
         var out = s
-        let map = ["&lt;": "<", "&gt;": ">", "&quot;": "\"", "&apos;": "'", "&nbsp;": " ", "&amp;": "&"]
-        for (k, v) in map { out = out.replacingOccurrences(of: k, with: v) }
-        if let re = try? NSRegularExpression(pattern: "&#(x?)([0-9a-fA-F]+);") {
-            out = re.stringByReplacingMatches(in: out, range: NSRange(out.startIndex..., in: out), withTemplate: "")
-            // Decodifica i riferimenti numerici con un eval manuale
-            out = decodeNumericEntities(out)
-        }
-        out = out.replacingOccurrences(of: "<!\\[CDATA\\[([\\s\\S]*?)\\]\\]>", with: "$1", options: .regularExpression)
-        return out
-            .replacingOccurrences(of: "<![CDATA[", with: "")
+        out = out.replacingOccurrences(of: "&lt;", with: "<")
+            .replacingOccurrences(of: "&gt;", with: ">")
+            .replacingOccurrences(of: "&quot;", with: "\"")
+            .replacingOccurrences(of: "&apos;", with: "'")
+            .replacingOccurrences(of: "&nbsp;", with: " ")
+            .replacingOccurrences(of: "&amp;", with: "&")
+        out = out.replacingOccurrences(of: "<![CDATA[", with: "")
             .replacingOccurrences(of: "]]>", with: "")
+        return decodeNumericEntities(out)
+    }
+
+    /// Decodifica i riferimenti numerici XML: &#8217; e &#x27;.
+    private static func decodeNumericEntities(_ s: String) -> String {
+        guard let re = try? NSRegularExpression(pattern: "&#(x?)([0-9a-fA-F]+);") else { return s }
+        var result = s
+        for m in re.matches(in: s, range: NSRange(s.startIndex..., in: s)).reversed() {
+            guard let full = Range(m.range, in: s),
+                  m.numberOfRanges >= 3,
+                  let hexR = Range(m.range(at: 1), in: s),
+                  let numR = Range(m.range(at: 2), in: s) else { continue }
+            let isHex = !s[hexR].isEmpty
+            let numStr = String(s[numR])
+            var replacement = ""
+            if let c = UInt32(numStr, radix: isHex ? 16 : 10), let scalar = Unicode.Scalar(c) {
+                replacement = String(Character(scalar))
+            }
+            result.replaceSubrange(full, with: replacement)
+        }
+        return result
     }
 
     private static func decodeNumericEntities(_ s: String) -> String {
@@ -89,23 +107,13 @@ enum NewsService {
 
     private static func parseDate(_ raw: String?) -> String? {
         guard let raw, !raw.isEmpty else { return nil }
-        let formats = [""]
-        _ = formats
-        let parsers: [(String, DateFormatter)] = [
-            ("rfc", {
-                let f = DateFormatter()
-                f.locale = Locale(identifier: "en_US_POSIX")
-                f.dateFormat = "E, d MMM yyyy HH:mm:ss Z"
-                return f
-            }()),
-            ("rfc2", {
-                let f = DateFormatter()
-                f.locale = Locale(identifier: "en_US_POSIX")
-                f.dateFormat = "E, d MMM yyyy HH:mm:ss zzz"
-                return f
-            }()),
-        ]
-        for (_, f) in parsers {
+        let f1 = DateFormatter()
+        f1.locale = Locale(identifier: "en_US_POSIX")
+        f1.dateFormat = "E, d MMM yyyy HH:mm:ss Z"
+        let f2 = DateFormatter()
+        f2.locale = Locale(identifier: "en_US_POSIX")
+        f2.dateFormat = "E, d MMM yyyy HH:mm:ss zzz"
+        for f in [f1, f2] {
             if let d = f.date(from: raw) {
                 return ISO8601DateFormatter().string(from: d)
             }

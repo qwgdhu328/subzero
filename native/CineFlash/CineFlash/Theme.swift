@@ -109,7 +109,14 @@ struct ScreenHeader<Right: View>: View {
     let eyebrow: String
     let title: String
     var subtitle: String? = nil
-    @ViewBuilder var right: Right
+    var right: Right
+
+    init(eyebrow: String, title: String, subtitle: String? = nil, @ViewBuilder right: () -> Right) {
+        self.eyebrow = eyebrow
+        self.title = title
+        self.subtitle = subtitle
+        self.right = right()
+    }
 
     var body: some View {
         VStack(alignment: .leading, spacing: 4) {
@@ -128,6 +135,12 @@ struct ScreenHeader<Right: View>: View {
             }
         }
         .frame(maxWidth: .infinity, alignment: .leading)
+    }
+}
+
+extension ScreenHeader where Right == EmptyView {
+    init(eyebrow: String, title: String, subtitle: String? = nil) {
+        self.init(eyebrow: eyebrow, title: title, subtitle: subtitle, right: { EmptyView() })
     }
 }
 
