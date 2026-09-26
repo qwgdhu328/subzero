@@ -12,6 +12,8 @@ struct UpcomingView: View {
     @State private var sourceFilter: String?
     @State private var searching = false
     @State private var searchingItem: NewsItem?
+    /// Scheda film aperta dopo il riconoscimento del titolo dalla notizia.
+    @State private var detailMovie: DetailMovie?
 
     private var sourceNames: [String] { Array(Set(items.map(\.source))).sorted() }
 
@@ -79,6 +81,10 @@ struct UpcomingView: View {
             }
         }
         .navigationBarHidden(true)
+        .sheet(item: $detailMovie) { m in
+            MovieDetailSheet(movie: m)
+                .environmentObject(app)
+        }
         .overlay {
             if searchingItem != nil {
                 Text("🎬 Cerco la pagina del film…")
@@ -122,9 +128,19 @@ struct UpcomingView: View {
         let movie = await ItunesService.findMovieFromNewsTitle(item.title)
         searchingItem = nil
         if let m = movie {
-            _ = m
-            // Mostra la scheda come sheet via stato condiviso: qui apriamo l'articolo
-            // in assenza di un router condiviso per la scheda film.
+            detailMovie = DetailMovie(
+                movie: m.asMovie,
+                trailerUrl: nil,
+                runtime: m.runtime,
+                genres: m.genres,
+                itunesUrl: m.itunesUrl,
+                previewUrl: m.previewUrl,
+                longDescription: m.longDescription,
+                needsTmdb: false,
+                articleUrl: item.link,
+                articleSource: item.source)
+        } else if let link = URL(string: item.link) {
+            await UIApplication.shared.open(link)
         }
     }
 }
@@ -372,7 +388,9 @@ struct SettingsView: View {
         }
         .background(Theme.bg)
         .navigationBarHidden(true)
-        .navigationDestination(for: DetailRoute.self) { $0.destination }
+        // NIENTE navigationDestination qui: la destinazione DetailRoute è già
+        // registrata sulla tab Oggi; una seconda registrazione nello stesso
+        // stack faceva aprire pagine ripetute a ogni tap.
     }
 
     @ViewBuilder

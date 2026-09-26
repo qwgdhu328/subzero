@@ -33,7 +33,10 @@ struct TodayView: View {
                             .listRowInsets(EdgeInsets())
                             .listRowSeparator(.hidden)
                         ForEach(visible) { item in
-                            NavigationLink(value: item) {
+                            Button {
+                                app.markRead(item.id)
+                                path.append(item)
+                            } label: {
                                 NewsRow(item: item)
                             }
                             .buttonStyle(.plain)
@@ -83,7 +86,12 @@ struct TodayView: View {
                                 .background(Capsule().fill(Theme.accent))
                         }
                     }
-                    NavigationLink(value: DetailRoute.saved) {
+                    // Button + push programmatico: i NavigationLink dentro le righe
+                    // di una List con polling si ri-attivano a ogni refresh
+                    // spingendo pagine duplicate all'infinito.
+                    Button {
+                        path.append(DetailRoute.saved)
+                    } label: {
                         ZStack(alignment: .topTrailing) {
                             Text("🔖").font(.system(size: 12))
                             if !app.savedNews.isEmpty {
@@ -94,6 +102,7 @@ struct TodayView: View {
                         .background(Theme.surfaceAlt.cornerRadius(15))
                         .overlay(Circle().stroke(Theme.border, lineWidth: 0.5))
                     }
+                    .buttonStyle(.plain)
                 })
 
             HStack(spacing: 8) {
@@ -110,12 +119,16 @@ struct TodayView: View {
             }
 
             HStack(spacing: 10) {
-                NavigationLink(value: DetailRoute.presale) {
+                Button {
+                    path.append(DetailRoute.presale)
+                } label: {
                     EntryCard(icon: "🎟️", label: "Prevendite", count: app.newsItems.filter(NewsService.isPreSale).count)
                 }
                 .buttonStyle(.plain)
                 .frame(maxWidth: .infinity)
-                NavigationLink(value: DetailRoute.upcoming) {
+                Button {
+                    path.append(DetailRoute.upcoming)
+                } label: {
                     EntryCard(icon: "📅", label: "In arrivo", count: app.newsItems.filter { !NewsService.isPreSale($0) && NewsService.isUpcoming($0) }.count)
                 }
                 .buttonStyle(.plain)
