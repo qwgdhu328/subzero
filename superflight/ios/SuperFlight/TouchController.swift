@@ -15,7 +15,7 @@ final class TouchController: NSObject {
     private var boostTouch: UITouch?
     private let radius: CGFloat = 130
 
-    init() {
+    override init() {
         super.init()
     }
 
