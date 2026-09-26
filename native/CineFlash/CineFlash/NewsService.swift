@@ -61,25 +61,6 @@ enum NewsService {
         return result
     }
 
-    private static func decodeNumericEntities(_ s: String) -> String {
-        guard let re = try? NSRegularExpression(pattern: "&#(x?)([0-9a-fA-F]+);") else { return s }
-        var result = s
-        let matches = re.matches(in: s, range: NSRange(s.startIndex..., in: s)).reversed()
-        for m in matches {
-            guard let full = Range(m.range, in: s) else { continue }
-            let hexPart = m.numberOfRanges > 2 ? Range(m.range(at: 1), in: s).map { String(s[$0]) } : nil
-            let numPart = m.numberOfRanges > 2 ? Range(m.range(at: 2), in: s).map { String(s[$0]) } : nil
-            var replacement = m.isEmpty ? "" : ""
-            if let hex = hexPart, let num = numPart, !num.isEmpty {
-                if let c = UInt32(num, radix: hex.isEmpty ? 10 : 16), let scalar = Unicode.Scalar(c) {
-                    replacement = String(Character(scalar))
-                }
-            }
-            result.replaceSubrange(full, with: replacement)
-        }
-        return result
-    }
-
     private static func firstTag(_ xml: String, _ tag: String) -> String? {
         guard let re = try? NSRegularExpression(
             pattern: "<\(tag)(?:\\s[^>]*)?>([\\s\\S]*?)</\(tag)>", options: [.caseInsensitive]) else { return nil }
