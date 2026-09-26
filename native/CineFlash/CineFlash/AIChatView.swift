@@ -109,7 +109,16 @@ struct ChatView: View {
                 messages.append(AIService.ChatMessage(role: "assistant", content: r.text))
                 thinkText = r.reasoning
             } catch {
-                self.error = "Generazione interrotta. Riprova."
+                // Cloud irraggiungibile: prova il modello locale scaricato dalla tab Modelli
+                if let local = await AIModelRunner.respond(
+                    question: q,
+                    context: context,
+                    history: history.map({ AIService.ChatMessage(role: $0.role, content: $0.content) })) {
+                    messages.append(AIService.ChatMessage(role: "assistant", content: local))
+                    thinkText = "Risposta generata offline con il modello scaricato"
+                } else {
+                    self.error = "AI cloud non raggiungibile. Scarica un modello nella tab Modelli per usare l'AI offline, o riprova tra poco."
+                }
             }
             streaming = false
             streamText = ""

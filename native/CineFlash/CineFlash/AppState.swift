@@ -49,6 +49,10 @@ final class AppState: ObservableObject {
         if !silent { newsLoading = true }
         isRefreshing = true
         newsError = nil
+        // Il caricamento sull'isola parte DURANTE il fetch, non dopo
+        if settings.liveActivitiesEnabled != false {
+            NewsActivityManager.shared.showLoading()
+        }
         let sources = activeSources()
         let (items, failed) = await NewsService.fetchAllNews(sources: sources)
         isRefreshing = false
@@ -96,8 +100,6 @@ final class AppState: ObservableObject {
     /// Rispetta il toggle dell'utente nelle Impostazioni.
     private func updateLiveActivity(fresh: [NewsItem]) {
         guard settings.liveActivitiesEnabled != false else { return }
-        // Durante lo scarico dei feed l'isola mostra lo stato di caricamento
-        NewsActivityManager.shared.showLoading()
         let presales = fresh.filter(NewsService.isPreSale)
         let latest = presales.first ?? fresh.first
         guard let item = latest else { return }
