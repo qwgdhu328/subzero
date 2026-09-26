@@ -30,7 +30,9 @@ struct SettingsTabView: View {
                             Text("Notifica locale quando arrivano nuove notizie o si aprono prevendite.")
                                 .font(Theme.ui(13)).foregroundColor(Theme.textDim)
                         }
-                        // 2. Isola Dinamica
+                        // 2. Modello AI + test connessione
+                        AIModelCard()
+                        // 3. Isola Dinamica
                         settingsCard("Isola Dinamica") {
                             Toggle("Mostra notizie e prevendite sull'isola", isOn: Binding(
                                 get: { app.settings.liveActivitiesEnabled != false },
@@ -56,7 +58,7 @@ struct SettingsTabView: View {
                                 }
                             }
                         }
-                        // 3. Esperienza
+                        // 4. Esperienza
                         settingsCard("L'esperienza") {
                             Text("L'intro al primo avvio racconta come funziona CineFlash: puoi rivederla quando vuoi. 🍿")
                                 .font(Theme.ui(13)).foregroundColor(Theme.textDim)
@@ -64,22 +66,22 @@ struct SettingsTabView: View {
                                 app.update { $0.onboarded = false }
                             }
                         }
-                        // 4. Dashboard AI
+                        // 5. Dashboard AI
                         NavigationLink(value: DetailRoute.aiDashboard) {
                             settingsCard("Dashboard AI", body: "La redazione AI valuta il catalogo e decide quali film promuovere e quali togliere.")
                         }
                         .buttonStyle(.plain)
-                        // 5. Privacy
+                        // 6. Privacy
                         NavigationLink(value: DetailRoute.privacy) {
                             settingsCard("Privacy e dati", body: "Nessun account, nessun analytics, nessun tracker: le tue liste restano solo sul tuo dispositivo.")
                         }
                         .buttonStyle(.plain)
-                        // 6. Permessi
+                        // 7. Permessi
                         NavigationLink(value: DetailRoute.permissions) {
                             settingsCard("Permessi", body: "Notifiche, fototeca e posizione: cosa l'app usa e perché.")
                         }
                         .buttonStyle(.plain)
-                        // 7. Watchlist
+                        // 8. Watchlist
                         settingsCard("I miei film (\(app.watchlist.count))") {
                             if app.watchlist.isEmpty {
                                 Text("Aggiungi film alla watchlist dal Catalogo con la stella.")
@@ -90,7 +92,7 @@ struct SettingsTabView: View {
                                 GhostButton(label: "↗ Esporta / condividi la lista") { shareWatchlist() }
                             }
                         }
-                        // 8. Gestione dati
+                        // 9. Gestione dati
                         settingsCard("Gestione dati") {
                             GhostButton(label: "🗑 Svuota notizie salvate (\(app.savedNews.count))") {
                                 for e in app.savedNews { _ = app.toggleSaved(e.item) }

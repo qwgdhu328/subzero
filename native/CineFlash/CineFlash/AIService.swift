@@ -21,6 +21,40 @@ enum AIService {
         "z-ai/glm-5.2:free",
         "meta-llama/llama-3.3-70b-instruct:free",
     ]
+
+    /// Modelli validi per la scelta utente (coerenti con freeModels).
+    static var availableModels: [String] { freeModels }
+
+    /// Modello preferito salvato dall'utente ("auto" = prova tutti).
+    private static var preferredModel: String {
+        UserDefaults.standard.string(forKey: "cineflash/ai-model") ?? "auto"
+    }
+
+    /// Aggiunge il modello preferito in testa alla lista dei candidati.
+    private static func orderedModels() -> [String] {
+        let pref = preferredModel
+        guard pref != "auto", freeModels.contains(pref) else { return freeModels }
+        return [pref] + freeModels.filter { $0 != pref }
+    }
+
+    /// Test di un singolo modello (usato dalla pagina di scelta).
+    static func askCloudWithModel(_ model: String, question: String) async throws -> String {
+        let messages = [Body.Msg(role: "user", content: question)]
+        let body = Body(model: model, temperature: 0.6, max_tokens: 1600, stream: nil, messages: messages)
+        let (data, http) = try await post(body)
+        guard (200..<300).contains(http.statusCode) else {
+            throw NSError(domain: "AIService", code: http.statusCode,
+                          userInfo: [NSLocalizedDescriptionKey: "HTTP \(http.statusCode)"])
+        }
+        struct Resp: Decodable { var choices: [C]?; struct C: Decodable { var message: M?; struct M: Decodable { var content: String? } } }
+        guard let resp = try? JSONDecoder().decode(Resp.self, from: data),
+              let text = resp.choices?.first?.message?.content?.trimmingCharacters(in: .whitespacesAndNewlines),
+              !text.isEmpty else {
+            throw NSError(domain: "AIService", code: -1,
+                          userInfo: [NSLocalizedDescriptionKey: "Risposta vuota dal modello"])
+        }
+        return text
+    }
     /// Modelli per la redazione (riscrittura articoli).
     private static let writerModels = [
         "openai/gpt-4o-mini",
@@ -94,7 +128,7 @@ enum AIService {
         messages.append(Body.Msg(role: "user", content: userMsg))
 
         var lastError: Error?
-        for model in freeModels {
+        for model in orderedModels() {
             let body = Body(model: model, temperature: 0.6, max_tokens: 1600, stream: nil, messages: messages)
             do {
                 let (data, http) = try await post(body)
