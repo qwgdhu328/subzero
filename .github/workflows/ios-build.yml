@@ -140,6 +140,12 @@ jobs:
             --generate-entitlement-der \
             "$APP_PATH"
 
+      - name: Verify widget extension plist
+        run: |
+          APP_PATH=$(find build/Build/Products/Release-iphoneos -name "*.app" -type d | head -n 1)
+          echo "--- Appex Info.plist (NSExtension must be present) ---"
+          plutil -p "$APP_PATH/PlugIns/CineFlashWidget.appex/Info.plist"
+
       - name: Package unsigned IPA
         if: inputs.sign_ios != true
         run: |
