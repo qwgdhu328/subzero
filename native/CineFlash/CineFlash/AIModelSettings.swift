@@ -54,6 +54,7 @@ enum AIModelTester {
 
 struct AIModelSettingsView: View {
     @EnvironmentObject var app: AppState
+    @Environment(\.dismiss) private var dismiss
     @State private var prefs = AIModelPrefs.load()
     @State private var testing: String? = nil
     @State private var testError: String? = nil
