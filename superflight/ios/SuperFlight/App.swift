@@ -2,7 +2,8 @@
 
 import UIKit
 
-final class AppDelegate: NSObject, UIApplicationDelegate {
+@main
+final class AppDelegate: UIResponder, UIApplicationDelegate {
     var window: UIWindow?
 
     func application(_ application: UIApplication,

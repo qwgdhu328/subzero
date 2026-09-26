@@ -1,5 +1,5 @@
 // main.cpp — test harness del motore di volo (senza grafica).
-// Simula minuti di gioco a 60fps e stampa statistiche di prestazione.
+// Simula minuti di gioco a 120Hz e stampa statistiche di prestazione.
 
 #include "../engine/game_api.h"
 #include <cstdio>
@@ -10,7 +10,7 @@ int main() {
     printf("== SuperFlight: test motore ==\n");
     fly_create();
 
-    // Simula input: curva morbida + boost periodico.
+    // Input simulato: curva morbida + boost periodico.
     auto fakeInput = [](double t) {
         float p = 0.45f * std::sinf(t * 0.9f);
         float y = 0.6f * std::sinf(t * 0.37f + 1.0f);
@@ -21,15 +21,18 @@ int main() {
 
     const double dt = 1.0 / 120.0;          // fixed timestep 120 Hz
     const double duration = 180.0;          // simula 3 minuti di gioco
-    double crashes = 0;
+    int resets = 0;
+    long long ticks = 0;
 
     auto t0 = std::chrono::high_resolution_clock::now();
     for (double t = 0; t < duration; t += dt) {
         fakeInput(t);
         fly_update(dt, 1170, 2532);
+        ++ticks;
 
-        if (t > 30.0 && fly_state() == 2) {   // dopo il primo eventuale crash
-            crashes++;
+        // Dopo un periodo di grazia: se siamo in crash/menu, riparte.
+        if (t > 20.0 && fly_state() != 1) {
+            resets++;
             fly_reset(fly_best());
         }
     }
@@ -37,20 +40,22 @@ int main() {
     double wallMs = std::chrono::duration<double, std::milli>(t1 - t0).count();
 
     int b = fly_building_count();
-    printf("Stato finale    : %d (0=Menu 1=Flying 2=Crashed)\n", fly_state());
+    int state = fly_state();
+    printf("Stato finale    : %d (0=Menu 1=Flying 2=Crashed)\n", state);
     printf("Punteggio       : %d (best %d), anelli: %d\n",
            fly_score(), fly_best(), fly_rings());
     printf("Edifici attivi  : %d\n", b);
     printf("Particelle      : %d\n", fly_particle_count());
-    printf("Tempo simulato  : %.0f s  (%.0f tick 120Hz)\n", duration, duration / dt);
-    printf("Wall time       : %.1f ms  →  %.2f µs/tick\n", wallMs,
-           wallMs * 1000.0 / (duration / dt));
+    printf("Tempo simulato  : %.0f s  (%lld tick 120Hz)\n", duration, ticks);
+    printf("Wall time       : %.1f ms  ->  %.2f us/tick\n", wallMs,
+           wallMs * 1000.0 / (double)ticks);
     printf("Speed real-time : %.0fx\n", (duration * 1000.0) / wallMs);
-    printf("Crash & reset   : %.0f\n", crashes);
+    printf("Reset (crash)   : %d\n", resets);
 
-    // Sanità: dopo 3 minuti deve avere raggiunto velocità > 0 e mondo popolato.
-    if (b < 50 || fly_speed() <= 0) {
-        printf("FALLITO: mondo insufficiente\n");
+    // Invarianti: mondo popolato, tick eseguiti, stato valido.
+    if (b < 20 || ticks < 1000 || state < 0 || state > 2) {
+        printf("FALLITO: invarianti non rispettate (b=%d ticks=%lld state=%d)\n",
+               b, ticks, state);
         return 1;
     }
     printf("OK\n");

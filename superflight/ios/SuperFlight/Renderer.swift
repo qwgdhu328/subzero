@@ -1,6 +1,7 @@
 // Renderer.swift — rendering 3D con Metal: edifici, anelli, particelle, cielo.
 
 import MetalKit
+import simd
 
 struct FlyUniforms {
     var viewProj: simd_float4x4
@@ -24,54 +25,45 @@ final class Renderer: NSObject, MTKViewDelegate {
     var noDepthState: MTLDepthStencilState!
 
     var bestScore = 0
-    weak var touch: TouchController?
 
-    private var cityBuffer: MTLBuffer?
-    private var cityCapacity = 512
-    private var glowBuffer: MTLBuffer?
+    // Buffer istanze (riusati, mai riallocati se non serve)
+    private var solidInstances: MTLBuffer?
+    private var glowInstances: MTLBuffer?
+    private var solidCapacity = 512
+    private var glowCapacity = 256
 
-    private let cubeVerts: [Float] = [
-        // 36 vertici di un cubo unitario centrato (posizione, normale)
-        -1,-1,-1, 0,0,-1,  1,-1,-1, 0,0,-1,  1,1,-1, 0,0,-1,
-        -1,-1,-1, 0,0,-1,  1,1,-1, 0,0,-1,  -1,1,-1, 0,0,-1,
-         1,-1,-1, 0,0,1,  -1,-1,-1, 0,0,1,  -1,1,1, 0,0,1,
-         1,-1,-1, 0,0,1,  -1,1,1, 0,0,1,   1,1,1, 0,0,1,
-        -1,-1,1, -1,0,0,  -1,-1,-1, -1,0,0, -1,1,-1, -1,0,0,
-        -1,-1,1, -1,0,0,  -1,1,-1, -1,0,0, -1,1,1, -1,0,0,
-         1,-1,1, 1,0,0,   1,-1,-1, 1,0,0,  1,1,-1, 1,0,0,
-         1,-1,1, 1,0,0,   1,1,-1, 1,0,0,  1,1,1, 1,0,0,
-        -1,1,1, 0,1,0,   -1,1,-1, 0,1,0,  1,1,-1, 0,1,0,
-        -1,1,1, 0,1,0,   1,1,-1, 0,1,0,   1,1,1, 0,1,0,
-        -1,-1,-1, 0,-1,0, -1,-1,1, 0,-1,0, 1,-1,1, 0,-1,0,
-        -1,-1,-1, 0,-1,0, 1,-1,1, 0,-1,0, 1,-1,-1, 0,-1,0,
-    ]
+    private var uniforms = FlyUniforms(
+        viewProj: simd_float4x4(1), cameraPos: .zero, time: 0)
 
     init(metalKitView: MTKView) {
         device = metalKitView.device!
         commandQueue = device.makeCommandQueue()!
-
         super.init()
-
         let lib = device.makeDefaultLibrary()
         buildPipelines(library: lib, view: metalKitView)
+        solidInstances = device.makeBuffer(
+            length: solidCapacity * MemoryLayout<InstanceData>.stride,
+            options: .storageModeShared)
+        glowInstances = device.makeBuffer(
+            length: glowCapacity * MemoryLayout<InstanceData>.stride,
+            options: .storageModeShared)
     }
 
     private func buildPipelines(library: MTLLibrary?, view: MTKView) {
-        let vsFn = library!.makeFunction(name: "vertexMain")!
-        let fsFn = library!.makeFunction(name: "fragmentMain")!
-        let glowFn = library!.makeFunction(name: "glowFragment")!
+        guard let lib = library else {
+            fatalError("Metal library non trovata: controlla Shaders.metal nel target")
+        }
+        let vsFn = lib.makeFunction(name: "vertexMain")!
+        let fsFn = lib.makeFunction(name: "fragmentMain")!
+        let glowFn = lib.makeFunction(name: "glowFragment")!
 
         let d = MTLRenderPipelineDescriptor()
         d.vertexFunction = vsFn
         d.fragmentFunction = fsFn
         d.colorAttachments[0].pixelFormat = view.colorPixelFormat
         d.colorAttachments[0].isBlendingEnabled = true
-        d.colorAttachments[0].rgbBlendOperation = .add
         d.colorAttachments[0].sourceRGBBlendFactor = .sourceAlpha
-        d.colorAttachments[0].destinationRGBBlendFactor = .oneMinusSourceAlpha
-        d.colorAttachments[0].sourceAlphaBlendFactor = .one
-        d.colorAttachments[0].destinationAlphaBlendFactor = .oneMinusSourceAlpha
-        d.depthAttachmentPixelFormat = view.depthStencilPixelFormat
+        d2setup(d, view: view, additive: false)
         pipelineCity = try! device.makeRenderPipelineState(descriptor: d)
 
         let d2 = MTLRenderPipelineDescriptor()
@@ -79,12 +71,7 @@ final class Renderer: NSObject, MTKViewDelegate {
         d2.fragmentFunction = glowFn
         d2.colorAttachments[0].pixelFormat = view.colorPixelFormat
         d2.colorAttachments[0].isBlendingEnabled = true
-        d2.colorAttachments[0].rgbBlendOperation = .add
-        d2.colorAttachments[0].sourceRGBBlendFactor = .sourceAlpha
-        d2.colorAttachments[0].destinationRGBBlendFactor = .one
-        d2.colorAttachments[0].sourceAlphaBlendFactor = .one
-        d2.colorAttachments[0].destinationAlphaBlendFactor = .one
-        d2.depthAttachmentPixelFormat = view.depthStencilPixelFormat
+        d2setup(d2, view: view, additive: true)
         pipelineGlow = try! device.makeRenderPipelineState(descriptor: d2)
 
         let dsd = MTLDepthStencilDescriptor()
@@ -98,49 +85,79 @@ final class Renderer: NSObject, MTKViewDelegate {
         noDepthState = device.makeDepthStencilState(descriptor: dsd2)!
     }
 
+    private func d2setup(_ d: MTLRenderPipelineDescriptor, view: MTKView, additive: Bool) {
+        d.colorAttachments[0].rgbBlendOperation = .add
+        d.colorAttachments[0].alphaBlendOperation = .add
+        if additive {
+            d.colorAttachments[0].sourceRGBBlendFactor = .one
+            d.colorAttachments[0].destinationRGBBlendFactor = .oneMinusSourceAlpha
+        } else {
+            d.colorAttachments[0].sourceRGBBlendFactor = .sourceAlpha
+            d.colorAttachments[0].destinationRGBBlendFactor = .oneMinusSourceAlpha
+        }
+        d.colorAttachments[0].sourceAlphaBlendFactor = .one
+        d.colorAttachments[0].destinationAlphaBlendFactor = .oneMinusSourceAlpha
+        d.depthAttachmentPixelFormat = view.depthStencilPixelFormat
+    }
+
     func mtkView(_ view: MTKView, drawableSizeWillChange size: CGSize) {}
 
     func draw(in view: MTKView) {
-        // 1) aggiorna il motore C++ con un timestep fisso
-        updateEngine(dt: 1.0 / Double(view.preferredFramesPerSecond),
-                     w: Int32(view.drawableSize.width),
-                     h: Int32(view.drawableSize.height))
+        // 1) motore C++: update a timestep fisso
+        fly_update(1.0 / Double(view.preferredFramesPerSecond),
+                   Int32(view.drawableSize.width),
+                   Int32(view.drawableSize.height))
 
-        guard let desc = view.currentRenderPassDescriptor,
+        // punteggio best per il restart
+        bestScore = max(bestScore, fly_best())
+
+        guard let drawable = view.currentDrawable,
+              let rpd = view.currentRenderPassDescriptor,
               let cmd = commandQueue.makeCommandBuffer(),
-              let rpe = desc,
-              let enc = cmd.makeRenderCommandEncoder(descriptor: rpe) else { return }
+              let enc = cmd.makeRenderCommandEncoder(descriptor: rpd) else { return }
 
-        let aspect = Float(view.drawableSize.width / max(1, view.drawableSize.height))
-        var u = makeUniforms(aspect: aspect)
+        let aspect = Float(view.drawableSize.width / max(1.0, view.drawableSize.height))
+        uniforms = makeUniforms(aspect: aspect)
+
+        // Cielo: clear color tramonto
+        rpd.colorAttachments[0].clearColor = MTLClearColor(red: 0.45, green: 0.62, blue: 0.85, alpha: 1)
 
         enc.setRenderPipelineState(pipelineCity)
         enc.setDepthStencilState(depthState)
         enc.setCullMode(.none)
-        enc.setVertexBytes(&u, length: MemoryLayout<FlyUniforms>.stride, index: 1)
+        enc.setVertexBuffer(uniformBuffer(), offset: 0, index: 1)
 
         drawCity(enc: enc)
-        drawRings(enc: enc, u: &u)
         drawPlayer(enc: enc)
+        drawRings(enc: enc)
         drawParticles(enc: enc)
 
         enc.endEncoding()
-        cmd.present(view.currentDrawable!)
+        cmd.present(drawable)
         cmd.commit()
     }
 
     // ------------------------------------------------------------ //
 
-    private func updateEngine(dt: Double, w: Int32, h: Int32) {
-        fly_update(dt, w, h)
+    private func uniformBuffer() -> MTLBuffer {
+        if let b = uniformsBuffer {
+            b.contents().copyMemory(from: &uniforms, byteCount: MemoryLayout<FlyUniforms>.stride)
+            return b
+        }
+        let b = device.makeBuffer(length: MemoryLayout<FlyUniforms>.stride,
+                                  options: .storageModeShared)!
+        b.contents().copyMemory(from: &uniforms, byteCount: MemoryLayout<FlyUniforms>.stride)
+        uniformsBuffer = b
+        return b
     }
+    private var uniformsBuffer: MTLBuffer?
+
 
     private func makeUniforms(aspect: Float) -> FlyUniforms {
         let cp = fly_cam_pos()
         let cq = fly_cam_quat()
         let w2 = sqrtf(max(0, 1 - cq.x*cq.x - cq.y*cq.y - cq.z*cq.z))
 
-        // shake
         var camPos = SIMD3<Float>(cp.x, cp.y, cp.z)
         let sh = fly_shake()
         if sh > 0 {
@@ -149,60 +166,61 @@ final class Renderer: NSObject, MTKViewDelegate {
         }
 
         let proj = MathUtil.perspective(fovY: 1.22, aspect: aspect, zNear: 0.5, zFar: 1600)
-        let view = MathUtil.lookFrom(eye: camPos,
-                                     quat: SIMD4<Float>(cq.x, cq.y, cq.z, w2))
-        return FlyUniforms(viewProj: proj * view,
-                           cameraPos: camPos,
-                           time: Float(fly_time()))
+        let view = MathUtil.lookFrom(eye: camPos, quat: SIMD4<Float>(cq.x, cq.y, cq.z, w2))
+        return FlyUniforms(viewProj: proj * view, cameraPos: camPos, time: Float(fly_time()))
+    }
+
+    private func ensure(_ buf: inout MTLBuffer?, capacity: inout Int, needed: Int) -> MTLBuffer {
+        if buf == nil || capacity < needed {
+            capacity = max(64, needed * 2)
+            buf = device.makeBuffer(length: capacity * MemoryLayout<InstanceData>.stride,
+                                    options: .storageModeShared)
+        }
+        return buf!
     }
 
     // ------------------------------------------------------------ //
+    //  Edifici
 
     private func drawCity(enc: MTLRenderCommandEncoder) {
-        let n = fly_building_count()
+        let n = Int(fly_building_count())
         guard n > 0 else { return }
-        if cityBuffer == nil || cityCapacity < n {
-            cityCapacity = max(512, n * 2)
-            cityBuffer = device.makeBuffer(length: cityCapacity * MemoryLayout<InstanceData>.stride,
-                                           options: .storageModeShared)
-        }
-        let ptr = cityBuffer!.contents().bindMemory(to: InstanceData.self, capacity: cityCapacity)
+        let buf = ensure(&solidInstances, capacity: &solidCapacity, needed: n)
+        let ptr = buf.contents().bindMemory(to: InstanceData.self, capacity: solidCapacity)
 
         for i in 0..<n {
             var pos = FlyVec3(); var size = FlyVec3(); var hue: Float = 0
             fly_building(Int32(i), &pos, &size, &hue)
             let m = MathUtil.translate(x: pos.x, y: pos.y + size.y, z: pos.z)
-                  * MathUtil.scaleNonUniform(sx: size.x, sy: size.y, sz: size.z)
-            let c = windowColor(hue: hue, height: size.y)
-            ptr[i] = InstanceData(model: m, color: c)
+                * MathUtil.scaleNonUniform(sx: size.x, sy: size.y, sz: size.z)
+            ptr[i] = InstanceData(model: m, color: windowColor(hue: hue, height: size.y))
         }
-        enc.setVertexBuffer(cityBuffer, offset: 0, index: 2)
-        enc.setVertexBytes(&n, length: MemoryLayout<Int32>.stride, index: 3)
-        enc.drawPrimitives(type: .triangle, vertexStart: 0, vertexCount: 36)
+
+        enc.setVertexBuffer(buf, offset: 0, index: 2)
+        var count = Int32(n)
+        enc.setVertexBytes(&count, length: MemoryLayout<Int32>.stride, index: 3)
+        enc.drawPrimitives(type: .triangle, vertexStart: 0, vertexCount: 36,
+                           instanceCount: n)
     }
 
     private func windowColor(hue: Float, height: Float) -> SIMD4<Float> {
-        // Torre scura con finestre accese proceduralmente nel fragment
         let warm = SIMD4<Float>(0.98, 0.72, 0.35, 1)
         let cool = SIMD4<Float>(0.55, 0.78, 1.0, 1)
-        let t = (sin(hue * 43.7) * 0.5 + 0.5)
+        let t = sin(hue * 43.7) * 0.5 + 0.5
         let win = warm * t + cool * (1 - t)
         let body = SIMD4<Float>(0.07, 0.08, 0.12, 1)
         let lum = min(1, height / 160)
-        return SIMD4<Float>(body.r * (1-lum) + win.r * lum * 0.35,
-                            body.g * (1-lum) + win.g * lum * 0.35,
-                            body.b * (1-lum) + win.b * lum * 0.35, 1)
+        return SIMD4<Float>(body.x * (1-lum) + win.x * lum * 0.35,
+                            body.y * (1-lum) + win.y * lum * 0.35,
+                            body.z * (1-lum) + win.z * lum * 0.35, 1)
     }
 
-    private func drawRings(enc: MTLRenderCommandEncoder, u: inout FlyUniforms) {
-        let n = fly_ring_count()
-        guard n > 0 else { return }
-        if glowBuffer == nil {
-            glowBuffer = device.makeBuffer(length: 64 * MemoryLayout<InstanceData>.stride,
-                                           options: .storageModeShared)
-        }
-        let ptr = glowBuffer!.contents().bindMemory(to: InstanceData.self, capacity: 64)
+    // ------------------------------------------------------------ //
+    //  Anelli
 
+    private func drawRings(enc: MTLRenderCommandEncoder) {
+        let n = Int(fly_ring_count())
+        guard n > 0 else { return }
         var count = 0
         for i in 0..<n {
             var pos = FlyVec3(); var q = FlyVec3(); var radius: Float = 0
@@ -211,64 +229,76 @@ final class Renderer: NSObject, MTKViewDelegate {
             if passed == 1 { continue }
             let qw = sqrtf(max(0, 1 - q.x*q.x - q.y*q.y - q.z*q.z))
             let m = MathUtil.translate(x: pos.x, y: pos.y, z: pos.z)
-                  * MathUtil.rotateQuat(x: q.x, y: q.y, z: q.z, w: qw)
-                  * MathUtil.scaleNonUniform(sx: radius, sy: radius, sz: 1.2)
-            let pulse = 0.75 + 0.25 * sin(Float(fly_time()) * 4 + Float(i))
-            ptr[count] = InstanceData(model: m,
-                color: SIMD4<Float>(0.3, 0.95, 1.0, 0.9 * pulse))
+                * MathUtil.rotateQuat(x: q.x, y: q.y, z: q.z, w: qw)
+                * MathUtil.scaleNonUniform(sx: radius, sy: radius, sz: 1.5)
+            let pulse = 0.75 + 0.25 * sin(uniforms.time * 4 + Float(i))
+            writeGlow(ptr: glowInstances!.contents().bindMemory(to: InstanceData.self, capacity: glowCapacity),
+                      index: count, model: m,
+                      color: SIMD4<Float>(0.3, 0.95, 1.0, 0.9 * pulse))
             count += 1
         }
         guard count > 0 else { return }
 
         enc.setRenderPipelineState(pipelineGlow)
         enc.setDepthStencilState(noDepthState)
-        enc.setVertexBuffer(glowBuffer, offset: 0, index: 2)
-        enc.setVertexBytes(&count, length: MemoryLayout<Int32>.stride, index: 3)
-        // torus grezzo via cubo scalato (gli anelli sono tori appiattiti approssimati)
-        enc.drawPrimitives(type: .triangle, vertexStart: 0, vertexCount: 36)
+        enc.setVertexBuffer(glowInstances, offset: 0, index: 2)
+        var c = Int32(count)
+        enc.setVertexBytes(&c, length: MemoryLayout<Int32>.stride, index: 3)
+        enc.drawPrimitives(type: .triangle, vertexStart: 0, vertexCount: 36,
+                           instanceCount: count)
         enc.setRenderPipelineState(pipelineCity)
         enc.setDepthStencilState(depthState)
     }
 
-    private func drawPlayer(enc: MTLRenderCommandEncoder) {
-        var pos = fly_player_pos()
-        var q = fly_player_quat()
-        let qw = sqrtf(max(0, 1 - q.x*q.x - q.y*q.y - q.z*q.z))
-        var m = MathUtil.translate(x: pos.x, y: pos.y + 1.2, z: pos.z)
-              * MathUtil.rotateQuat(x: q.x, y: q.y, z: q.z, w: qw)
-              * MathUtil.scaleNonUniform(sx: 0.9, sy: 0.5, sz: 2.2)
-        var color = SIMD4<Float>(0.95, 0.3, 0.25, 1)
-        var one = Int32(1)
-        enc.setVertexBuffer(&m, offset: 0, index: 2)  // NB: bytes, non buffer
-        enc.setVertexBytes(&m, length: MemoryLayout<simd_float4x4>.stride, index: 2)
-        enc.setVertexBytes(&one, length: MemoryLayout<Int32>.stride, index: 3)
-        var col = color
-        enc.setVertexBytes(&col, length: MemoryLayout<SIMD4<Float>>.stride, index: 4)
-        _ = pos; _ = q
-        enc.drawPrimitives(type: .triangle, vertexStart: 0, vertexCount: 36)
+    private func writeGlow(ptr: UnsafeMutablePointer<InstanceData>, index: Int,
+                           model: simd_float4x4, color: SIMD4<Float>) {
+        ptr[index] = InstanceData(model: model, color: color)
     }
 
+    // ------------------------------------------------------------ //
+    //  Giocatore (capsula stilizzata = cubo scalato)
+
+    private func drawPlayer(enc: MTLRenderCommandEncoder) {
+        let pos = fly_player_pos()
+        let q = fly_player_quat()
+        let qw = sqrtf(max(0, 1 - q.x*q.x - q.y*q.y - q.z*q.z))
+        let m = MathUtil.translate(x: pos.x, y: pos.y + 1.2, z: pos.z)
+            * MathUtil.rotateQuat(x: q.x, y: q.y, z: q.z, w: qw)
+            * MathUtil.scaleNonUniform(sx: 0.9, sy: 0.55, sz: 2.2)
+
+        var inst = InstanceData(model: m, color: SIMD4<Float>(0.95, 0.32, 0.25, 1))
+        enc.setVertexBytes(&inst, length: MemoryLayout<InstanceData>.stride, index: 2)
+        var one = Int32(1)
+        enc.setVertexBytes(&one, length: MemoryLayout<Int32>.stride, index: 3)
+        enc.drawPrimitives(type: .triangle, vertexStart: 0, vertexCount: 36,
+                           instanceCount: 1)
+    }
+
+    // ------------------------------------------------------------ //
+    //  Particelle
+
     private func drawParticles(enc: MTLRenderCommandEncoder) {
-        let n = fly_particle_count()
+        let n = Int(fly_particle_count())
         guard n > 0 else { return }
-        if glowBuffer == nil || 64 < n {
-            glowBuffer = device.makeBuffer(length: max(64, n) * MemoryLayout<InstanceData>.stride,
-                                           options: .storageModeShared)
-        }
-        let ptr = glowBuffer!.contents().bindMemory(to: InstanceData.self, capacity: max(64, n))
+        let buf = ensure(&glowInstances, capacity: &glowCapacity, needed: n)
+        let ptr = buf.contents().bindMemory(to: InstanceData.self, capacity: glowCapacity)
 
         for i in 0..<n {
             var pos = FlyVec3(); var size: Float = 0; var life: Float = 0; var hue: Float = 0
             fly_particle(Int32(i), &pos, &size, &life, &hue)
             let m = MathUtil.translate(x: pos.x, y: pos.y, z: pos.z)
-                  * MathUtil.scaleNonUniform(sx: size, sy: size, sz: size)
-            ptr[i] = InstanceData(model: m, color: SIMD4<Float>(1.0, 0.75, 0.3, life * 0.85))
+                * MathUtil.scaleNonUniform(sx: size, sy: size, sz: size)
+            ptr[i] = InstanceData(model: m,
+                                  color: SIMD4<Float>(1.0, 0.75, 0.3, life * 0.85))
         }
+
         enc.setRenderPipelineState(pipelineGlow)
         enc.setDepthStencilState(noDepthState)
-        enc.setVertexBuffer(glowBuffer, offset: 0, index: 2)
-        enc.setVertexBytes(&n, length: MemoryLayout<Int32>.stride, index: 3)
-        enc.drawPrimitives(type: .triangle, vertexStart: 0, vertexCount: 36)
+        enc.setVertexBuffer(buf, offset: 0, index: 2)
+        var count = Int32(n)
+        enc.setVertexBytes(&count, length: MemoryLayout<Int32>.stride, index: 3)
+        enc.drawPrimitives(type: .triangle, vertexStart: 0, vertexCount: 36,
+                           instanceCount: n)
     }
 }
 

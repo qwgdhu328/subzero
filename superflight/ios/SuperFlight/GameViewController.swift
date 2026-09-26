@@ -1,13 +1,38 @@
 import UIKit
-import Metal
 import MetalKit
 
+// GameView — MTKView che inoltra i touch al controller.
+final class GameView: MTKView {
+    weak var touchDelegate: TouchController?
+
+    override func touchesBegan(_ touches: Set<UITouch>, with event: UIEvent?) {
+        super.touchesBegan(touches, with: event)
+        touchDelegate?.touchesBegan(touches, in: self)
+    }
+
+    override func touchesMoved(_ touches: Set<UITouch>, with event: UIEvent?) {
+        super.touchesMoved(touches, with: event)
+        touchDelegate?.touchesMoved(touches, in: self)
+    }
+
+    override func touchesEnded(_ touches: Set<UITouch>, with event: UIEvent?) {
+        super.touchesEnded(touches, with: event)
+        touchDelegate?.touchesEnded(touches, in: self)
+    }
+
+    override func touchesCancelled(_ touches: Set<UITouch>, with event: UIEvent?) {
+        super.touchesCancelled(touches, with: event)
+        touchDelegate?.touchesCancelled(touches, in: self)
+    }
+}
+
 // GameViewController — crea il renderer Metal e pilota il motore C++.
-class GameViewController: UIViewController {
+final class GameViewController: UIViewController {
 
     private var renderer: Renderer!
-    private var mtkView: MTKView!
+    private var gameView: GameView!
     private var hud: HUDView!
+    private let touch = TouchController(sceneView: nil)
 
     override var prefersStatusBarHidden: Bool { true }
     override var supportedInterfaceOrientations: UIInterfaceOrientationMask { .landscape }
@@ -20,38 +45,36 @@ class GameViewController: UIViewController {
             fatalError("Metal non disponibile su questo dispositivo")
         }
 
-        mtkView = MTKView(frame: view.bounds, device: device)
-        mtkView.autoresizingMask = [.flexibleWidth, .flexibleHeight]
-        mtkView.framebufferOnly = true
-        mtkView.depthStencilPixelFormat = .depth32Float
-        mtkView.colorPixelFormat = .bgra8Unorm
-        mtkView.preferredFramesPerSecond = 120
-        view.addSubview(mtkView)
+        gameView = GameView(frame: view.bounds, device: device)
+        gameView.autoresizingMask = [.flexibleWidth, .flexibleHeight]
+        gameView.framebufferOnly = true
+        gameView.depthStencilPixelFormat = .depth32Float
+        gameView.colorPixelFormat = .bgra8Unorm
+        gameView.preferredFramesPerSecond = 120
+        gameView.isUserInteractionEnabled = true
+        gameView.touchDelegate = touch
+        view.addSubview(gameView)
 
-        renderer = Renderer(metalKitView: mtkView)
+        renderer = Renderer(metalKitView: gameView)
+        gameView.delegate = renderer
 
         hud = HUDView(frame: view.bounds)
         hud.autoresizingMask = [.flexibleWidth, .flexibleHeight]
-        hud.onRestart = { [weak self] in fly_reset(self?.renderer.bestScore ?? 0) }
+        hud.onRestart = { [weak self] in
+            fly_reset(Int32(self?.renderer.bestScore ?? 0))
+        }
         view.addSubview(hud)
 
         // Motore C++
         fly_create()
         fly_reset(0)
 
-        // Input: virtual joystick dinamico (tocco anywhere = centro stick)
-        let touch = TouchController(sceneView: mtkView)
-        touch.onStick = { [weak self] pitch, yaw, roll in
+        // Input → motore
+        touch.onStick = { pitch, yaw, roll in
             fly_set_stick(pitch, yaw, roll)
         }
-        touch.onBoost = { [weak self] on in
+        touch.onBoost = { on in
             fly_set_boost(on ? 1 : 0)
         }
-        mtkView.isUserInteractionEnabled = true
-        touch.attach(to: mtkView)
-        renderer.touch = touch
-        hud.touch = touch
-
-        mtkView.delegate = renderer
     }
 }
