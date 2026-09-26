@@ -1,0 +1,36 @@
+name: SuperFlight
+options:
+  bundleIdPrefix: com.superflight
+  deploymentTarget:
+    iOS: "16.0"
+  createIntermediateGroups: true
+settings:
+  base:
+    SWIFT_VERSION: "5.9"
+    CLANG_CXX_LANGUAGE_STANDARD: c++17
+    CLANG_CXX_LIBRARY: libc++
+    SWIFT_OBJC_BRIDGING_HEADER: ios/SuperFlight/BridgingHeader.h
+    CODE_SIGN_STYLE: Automatic
+    ENABLE_BITCODE: "NO"
+    TARGETED_DEVICE_FAMILY: "1,2"
+    INFOPLIST_FILE: ios/SuperFlight/Info.plist
+targets:
+  SuperFlight:
+    type: application
+    platform: iOS
+    sources:
+      - path: ios/SuperFlight
+      - path: native/engine
+        createIntermediateGroups: true
+        type: group
+        buildPhase: sources
+        headersInFrames: false
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: com.superflight.game
+        MARKETING_VERSION: "1.0"
+        CURRENT_PROJECT_VERSION: "1"
+        GENERATE_INFOPLIST_FILE: "NO"
+        OTHER_LDFLAGS: ["-lc++"]
+        GCC_PRECOMPILE_PREFIX_HEADER: "NO"
+        SWIFT_OBJC_INTERFACE_HEADER_NAME: ""
