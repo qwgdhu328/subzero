@@ -12,9 +12,9 @@ int main() {
 
     // Input simulato: curva morbida + boost periodico.
     auto fakeInput = [](double t) {
-        float p = 0.45f * std::sinf(t * 0.9f);
-        float y = 0.6f * std::sinf(t * 0.37f + 1.0f);
-        float r = 0.3f * std::sinf(t * 1.7f);
+        float p = 0.45f * std::sin(t * 0.9);
+        float y = 0.6f * std::sin(t * 0.37 + 1.0);
+        float r = 0.3f * std::sin(t * 1.7);
         fly_set_stick(p, y, r);
         fly_set_boost((std::fmod(t, 9.0) > 6.0) ? 1 : 0);
     };
