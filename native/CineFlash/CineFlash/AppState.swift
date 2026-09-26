@@ -88,7 +88,9 @@ final class AppState: ObservableObject {
     }
 
     /// Aggiorna l'Isola Dinamica con l'ultima novità (prevendite prioritarie).
+    /// Rispetta il toggle dell'utente nelle Impostazioni.
     private func updateLiveActivity(fresh: [NewsItem]) {
+        guard settings.liveActivitiesEnabled != false else { return }
         let presales = fresh.filter(NewsService.isPreSale)
         let latest = presales.first ?? fresh.first
         guard let item = latest else { return }

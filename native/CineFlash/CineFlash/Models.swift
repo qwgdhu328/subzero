@@ -41,6 +41,8 @@ struct Settings: Codable, Equatable {
     /// Chiavi delle sorgenti predefinite disabilitate dall'utente.
     var disabledSources: [String]
     var notifyEnabled: Bool?
+    /// Live Activity sull'Isola Dinamica per notizie e prevendite.
+    var liveActivitiesEnabled: Bool?
     var onboarded: Bool?
 }
 

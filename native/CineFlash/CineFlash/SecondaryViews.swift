@@ -284,9 +284,7 @@ struct SettingsView: View {
                     }
 
                     Group {
-                        NavigationLink(value: DetailRoute.aiDashboard) {
-                            settingsCard("Dashboard AI", body: "La redazione AI valuta il catalogo e decide quali film promuovere e quali togliere.")
-                        }
+                        // 1. Notifiche
                         settingsCard("Notifiche") {
                             Toggle("Avvisami subito", isOn: Binding(
                                 get: { app.settings.notifyEnabled != false },
@@ -296,6 +294,33 @@ struct SettingsView: View {
                             Text("Notifica locale quando arrivano nuove notizie o si aprono prevendite.")
                                 .font(Theme.ui(13)).foregroundColor(Theme.textDim)
                         }
+                        // 2. Isola Dinamica / Live Activities
+                        settingsCard("Isola Dinamica") {
+                            Toggle("Mostra notizie e prevendite sull'isola", isOn: Binding(
+                                get: { app.settings.liveActivitiesEnabled != false },
+                                set: { v in
+                                    app.update { $0.liveActivitiesEnabled = v }
+                                    if v {
+                                        NewsActivityManager.shared.showNews(
+                                            emoji: "🎟️",
+                                            headline: "CineFlash è pronto",
+                                            detail: "Ti avvisiamo qui le novità",
+                                            newCount: 0)
+                                    } else {
+                                        NewsActivityManager.shared.endAll()
+                                    }
+                                }))
+                                .tint(Theme.accent)
+                                .font(Theme.ui(15, .bold))
+                            Text("Una pillola live sull'Isola Dinamica con l'ultima notizia e il conteggio delle novità, con priorità alle prevendite. Richiede iPhone 14 Pro o successivo.")
+                                .font(Theme.ui(13)).foregroundColor(Theme.textDim)
+                            GhostButton(label: "⚙ Apri le impostazioni di sistema") {
+                                if let url = URL(string: UIApplication.openSettingsURLString) {
+                                    UIApplication.shared.open(url)
+                                }
+                            }
+                        }
+                        // 3. Esperienza / onboarding
                         settingsCard("L'esperienza") {
                             Text("L'intro al primo avvio racconta come funziona CineFlash: puoi rivederla quando vuoi. 🍿")
                                 .font(Theme.ui(13)).foregroundColor(Theme.textDim)
@@ -304,12 +329,19 @@ struct SettingsView: View {
                                 dismiss()
                             }
                         }
-                        NavigationLink(value: DetailRoute.permissions) {
-                            settingsCard("Permessi", body: "Notifiche, fototeca e posizione: cosa l'app usa e perché.")
+                        // 4. Catalogo / Dashboard AI
+                        NavigationLink(value: DetailRoute.aiDashboard) {
+                            settingsCard("Dashboard AI", body: "La redazione AI valuta il catalogo e decide quali film promuovere e quali togliere.")
                         }
+                        // 5. Privacy
                         NavigationLink(value: DetailRoute.privacy) {
                             settingsCard("Privacy e dati", body: "Nessun account, nessun analytics, nessun tracker: le tue liste restano solo sul tuo dispositivo.")
                         }
+                        // 6. Permessi
+                        NavigationLink(value: DetailRoute.permissions) {
+                            settingsCard("Permessi", body: "Notifiche, fototeca e posizione: cosa l'app usa e perché.")
+                        }
+                        // 7. Watchlist e gestione dati
                         settingsCard("I miei film (\(app.watchlist.count))") {
                             if app.watchlist.isEmpty {
                                 Text("Aggiungi film alla watchlist dal Catalogo con la stella.")
