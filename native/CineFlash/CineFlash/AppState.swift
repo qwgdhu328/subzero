@@ -10,6 +10,9 @@ final class AppState: ObservableObject {
     @Published var reminders: [ReleaseReminder] = []
     @Published var newsItems: [NewsItem] = []
     @Published var newsLoading = true
+    /// True durante un refresh silenzioso (poll): l'UI mostra caricamento
+    /// nelle notifiche e sull'isola senza bloccare la lista.
+    @Published var isRefreshing = false
     @Published var newsError: String?
     @Published var aiArticles: [String: AiArticle] = [:]
     @Published var readIds: Set<String> = []
@@ -44,9 +47,11 @@ final class AppState: ObservableObject {
 
     func refreshNews(silent: Bool = false) async {
         if !silent { newsLoading = true }
+        isRefreshing = true
         newsError = nil
         let sources = activeSources()
         let (items, failed) = await NewsService.fetchAllNews(sources: sources)
+        isRefreshing = false
 
         let oldIds = Set(newsItems.map(\.id))
         let fresh = items.filter { x in
@@ -91,6 +96,8 @@ final class AppState: ObservableObject {
     /// Rispetta il toggle dell'utente nelle Impostazioni.
     private func updateLiveActivity(fresh: [NewsItem]) {
         guard settings.liveActivitiesEnabled != false else { return }
+        // Durante lo scarico dei feed l'isola mostra lo stato di caricamento
+        NewsActivityManager.shared.showLoading()
         let presales = fresh.filter(NewsService.isPreSale)
         let latest = presales.first ?? fresh.first
         guard let item = latest else { return }

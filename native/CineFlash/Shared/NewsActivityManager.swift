@@ -1,6 +1,7 @@
 import Foundation
 import ActivityKit
 import SwiftUI
+import WidgetKit
 
 /// Gestisce la Live Activity sull'Isola Dinamica (iOS 16.1+):
 /// avvio all'arrivo di notizie/prevendite, aggiornamenti, terminazione.
@@ -40,6 +41,33 @@ final class NewsActivityManager: ObservableObject {
             } catch {
                 // Live Activities non disponibili (permesso negato, Limiti, simulatore vecchio…)
                 lastError = error.localizedDescription
+            }
+        }
+    }
+
+    /// Stato di caricamento: mostra "Aggiorno i feed…" sull'isola mentre
+    /// l'app scarica le notizie. Aggiorna anche i widget home screen.
+    func showLoading() {
+        guard isSupported else { return }
+        let state = NewsActivityAttributes.ContentState(
+            emoji: "⏳",
+            headline: "Aggiorno i feed…",
+            detail: "Controllo le ultime notizie",
+            newCount: 0,
+            updatedAt: Date())
+        Task {
+            WidgetCenter.shared.reloadAllTimelines()
+            do {
+                let existing = Activity<NewsActivityAttributes>.activities
+                if let current = existing.first {
+                    await current.update(using: state)
+                } else {
+                    _ = try Activity<NewsActivityAttributes>.request(
+                        attributes: NewsActivityAttributes(),
+                        content: .init(state: state, staleDate: Date().addingTimeInterval(Self.maxDuration)))
+                }
+            } catch {
+                // best effort
             }
         }
     }

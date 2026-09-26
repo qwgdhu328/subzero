@@ -46,8 +46,8 @@ struct MainTabs: View {
         TabView {
             TodayView()
                 .tabItem { Label("Oggi", systemImage: "newspaper") }
-            CatalogView()
-                .tabItem { Label("Catalogo", systemImage: "film") }
+            AIModelsView()
+                .tabItem { Label("Modelli", systemImage: "arrow.down.circle") }
             AITabView()
                 .tabItem { Label("AI", systemImage: "sparkles") }
         }

@@ -147,6 +147,17 @@ struct TodayView: View {
                     .foregroundColor(Theme.warn)
             }
 
+            // Indicatore di caricamento durante l'aggiornamento (anche silenzioso)
+            if app.isRefreshing {
+                HStack(spacing: 6) {
+                    ProgressView().tint(Theme.accent).scaleEffect(0.7)
+                    Text("Aggiorno le notizie…")
+                        .font(Theme.ui(11, .semibold))
+                        .foregroundColor(Theme.textDim)
+                }
+                .frame(maxWidth: .infinity, alignment: .leading)
+            }
+
             if app.newsLoading && app.newsItems.isEmpty {
                 VStack(spacing: 10) {
                     ForEach(0..<6, id: \.self) { _ in SkeletonRow() }
