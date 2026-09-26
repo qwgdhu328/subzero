@@ -79,6 +79,7 @@ final class ModelManager: ObservableObject {
         let task = URLSession.shared.downloadTask(with: url) { [weak self] tempURL, resp, error in
             Task { @MainActor [weak self] in
                 guard let self else { return }
+                self.tasks[model.id] = nil
                 if let tempURL, error == nil {
                     let dest = self.localFileURL(model.id)
                     try? FileManager.default.removeItem(at: dest)
@@ -89,10 +90,25 @@ final class ModelManager: ObservableObject {
                 }
             }
         }
-        // Progressione via KVO sul conteggio byte ricevuti
-        task.addObserver(self, forKeyPath: "countOfBytesReceived", options: [.new], context: nil)
         tasks[model.id] = task
         task.resume()
+
+        // Progressione via polling dei byte del task (niente KVO: fragile su task)
+        Task { [weak self] in
+            while !Task.isCancelled {
+                try? await Task.sleep(nanoseconds: 300_000_000)
+                guard let self else { return }
+                let received = task.countOfBytesReceived
+                let expected = task.countOfBytesExpectedToReceive
+                await MainActor.run {
+                    guard self.tasks[model.id] === task else { return }
+                    if expected > 0 {
+                        self.states[model.id] = .downloading(progress: Double(received) / Double(expected))
+                    }
+                }
+                if task.state == .completed { break }
+            }
+        }
     }
 
     func cancelDownload(_ model: AIModel) {
@@ -104,20 +120,6 @@ final class ModelManager: ObservableObject {
     func removeModel(_ model: AIModel) {
         try? FileManager.default.removeItem(at: localFileURL(model.id))
         states[model.id] = .idle
-    }
-
-    nonisolated override func observeValue(forKeyPath keyPath: String?, of object: Any?, change: [NSKeyValueChangeKey: Any]?, context: UnsafeMutableRawPointer?) {
-        guard keyPath == "countOfBytesReceived",
-              let task = object as? URLSessionDownloadTask else { return }
-        let received = task.countOfBytesReceived
-        let expected = task.countOfBytesExpectedToReceive
-        let modelID: String? = DispatchQueue.main.sync {
-            tasks.first(where: { $0.value == task })?.key
-        }
-        guard let modelID, expected > 0 else { return }
-        Task { @MainActor [weak self] in
-            self?.states[modelID] = .downloading(progress: Double(received) / Double(expected))
-        }
     }
 }
 
