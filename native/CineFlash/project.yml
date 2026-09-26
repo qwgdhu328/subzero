@@ -1,0 +1,38 @@
+name: CineFlash
+options:
+  bundleIdPrefix: com.cineflash
+  createIntermediateGroups: true
+
+settings:
+  base:
+    SWIFT_VERSION: "5.10"
+    TARGETED_DEVICE_FAMILY: "1,2"
+    CODE_SIGN_IDENTITY: ""
+    CODE_SIGNING_REQUIRED: "NO"
+    CODE_SIGNING_ALLOWED: "NO"
+
+targets:
+  CineFlash:
+    type: application
+    platform: iOS
+    sources:
+      - path: CineFlash
+    info:
+      path: CineFlash/Info.plist
+      properties:
+        CFBundleDisplayName: CineFlash
+        CFBundleShortVersionString: "2.0"
+        CFBundleVersion: "1"
+        UILaunchScreen:
+          UIColorName: ""
+        UISupportedInterfaceOrientations:
+          - UIInterfaceOrientationPortrait
+        ITSAppUsesNonExemptEncryption: false
+        NSUserNotificationsUsageDescription: CineFlash ti avvisa quando si aprono le prevendite e quando arrivano notizie importanti sul cinema.
+        NSPhotoLibraryAddUsageDescription: Permette di salvare i poster dei film nella tua fototeca.
+        NSLocationWhenInUseUsageDescription: CineFlash usa la posizione solo per ordinare i cinema più vicini quando prenoti un biglietto. La posizione non viene mai salvata né inviata ad alcun server.
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: com.cineflash.app
+        INFOPLIST_KEY_UILaunchScreen_Generation: YES
+        ENABLE_USER_SCRIPT_SANDBOXING: YES

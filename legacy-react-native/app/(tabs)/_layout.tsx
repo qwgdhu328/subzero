@@ -3,8 +3,9 @@ import type { SFSymbol } from "sf-symbols-typescript";
 import { theme } from "../../src/theme";
 
 /**
- * Tab bar NATIVA: UITabBarController di iOS (Liquid Glass su iOS 26),
- * Material Bottom Navigation su Android, fallback JS sul web.
+ * Tab bar: tre tab — Oggi (news editoriali), Catalogo (film), AI (chat).
+ * Impostazioni non è più una tab: si raggiunge dall'ingranaggio negli header.
+ * L'AI resta al centro: è la funzione che rende CineFlash diverso.
  */
 export default function TabsLayout() {
   return (
@@ -22,17 +23,17 @@ export default function TabsLayout() {
     >
       <NativeTabs.Trigger name="index">
         <NativeTabs.Trigger.Icon sf={"newspaper" as SFSymbol} />
-        <NativeTabs.Trigger.Label>Notizie</NativeTabs.Trigger.Label>
+        <NativeTabs.Trigger.Label>Oggi</NativeTabs.Trigger.Label>
       </NativeTabs.Trigger>
 
       <NativeTabs.Trigger name="movies">
         <NativeTabs.Trigger.Icon sf={"film" as SFSymbol} />
-        <NativeTabs.Trigger.Label>Film</NativeTabs.Trigger.Label>
+        <NativeTabs.Trigger.Label>Catalogo</NativeTabs.Trigger.Label>
       </NativeTabs.Trigger>
 
-      <NativeTabs.Trigger name="settings">
-        <NativeTabs.Trigger.Icon sf={"gearshape" as SFSymbol} />
-        <NativeTabs.Trigger.Label>Impostazioni</NativeTabs.Trigger.Label>
+      <NativeTabs.Trigger name="ai-tab">
+        <NativeTabs.Trigger.Icon sf={"sparkles" as SFSymbol} />
+        <NativeTabs.Trigger.Label>AI</NativeTabs.Trigger.Label>
       </NativeTabs.Trigger>
     </NativeTabs>
   );

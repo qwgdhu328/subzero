@@ -1,7 +1,6 @@
 name: iOS build
 
 on:
-  # Lancio manuale con scelta firma
   workflow_dispatch:
     inputs:
       sign_ios:
@@ -9,7 +8,6 @@ on:
         type: boolean
         default: false
 
-  # Riutilizzabile da altri repo/workflow
   workflow_call:
     inputs:
       sign_ios:
@@ -30,12 +28,7 @@ on:
   push:
     branches: [main, master]
     paths:
-      - "src/**"
-      - "app/**"
-      - "assets/**"
-      - "app.json"
-      - "package.json"
-      - "package-lock.json"
+      - "native/**"
       - ".github/workflows/ios-build.yml"
 
 permissions:
@@ -43,69 +36,34 @@ permissions:
 
 jobs:
   build-ios:
-    name: iOS build
+    name: iOS build (SwiftUI)
     runs-on: macos-15
-    timeout-minutes: 90
+    timeout-minutes: 60
 
     steps:
       - name: Checkout
         uses: actions/checkout@v4
 
-      - name: Setup Node
-        uses: actions/setup-node@v4
-        with:
-          node-version: 20
-          cache: npm
-          cache-dependency-path: package-lock.json
+      - name: Install xcodegen
+        run: brew install xcodegen
 
-      - name: Install dependencies
-        run: npm ci
-
-      - name: Generate native iOS project (expo prebuild)
+      - name: Generate Xcode project
         run: |
-          set -o pipefail
-          npx expo prebuild --platform ios --no-install --clean 2>&1 | tee prebuild.log
+          cd native/CineFlash
+          xcodegen generate
+          ls -la
 
       - name: Setup Xcode
         uses: maxim-lobanov/setup-xcode@v1
         with:
           xcode-version: latest-stable
 
-      - name: Install pods
-        run: pod install --project-directory=ios
-
-      - name: Resolve Xcode scheme
-        run: |
-          # NOTA: niente "ls dir" (elenca il contenuto!): si usa find
-          WORKSPACE=$(find ios -maxdepth 1 -name "*.xcworkspace" | head -n 1)
-          PROJ=$(find ios -maxdepth 1 -name "*.xcodeproj" | head -n 1)
-          # Lo scheme dell'app generato da prebuild coincide con il nome dell'xcodeproj
-          # (NON schemes[0]: il progetto Pods espone scheme tipo "boost" che vengono prima)
-          SCHEME=$(basename "$PROJ" .xcodeproj)
-          echo "Workspace: $WORKSPACE — project: $PROJ — scheme: $SCHEME"
-          # Solo informativo: mostra gli schemes reali nel log
-          xcodebuild -list -workspace "$WORKSPACE" || true
-          # Se per qualche motivo lo scheme non esiste, prendi il primo non-Pods
-          LIST=$(xcodebuild -list -workspace "$WORKSPACE" 2>/dev/null || true)
-          if [ -n "$LIST" ]; then
-            if ! echo "$LIST" | awk '/Schemes:/{f=1;next} f&&NF{print $1}' | grep -qx "$SCHEME"; then
-              ALT=$(echo "$LIST" | awk '/Schemes:/{f=1;next} f&&NF{print $1}' | grep -v -E '^(Pods|boost|ReactNativeDependencies)' | head -n 1)
-              if [ -n "$ALT" ]; then
-                SCHEME="$ALT"
-              fi
-            fi
-          fi
-          echo "SCHEME_NAME=$SCHEME" >> "$GITHUB_ENV"
-          echo "WORKSPACE_PATH=$WORKSPACE" >> "$GITHUB_ENV"
-          echo "Using scheme: $SCHEME"
-
-      # 1) .app per il simulatore — nessuna firma coinvolta
       - name: Build simulator .app (no signing)
         run: |
           set -o pipefail
           xcodebuild \
-            -workspace "$WORKSPACE_PATH" \
-            -scheme "$SCHEME_NAME" \
+            -project native/CineFlash/CineFlash.xcodeproj \
+            -scheme CineFlash \
             -configuration Release \
             -sdk iphonesimulator \
             -derivedDataPath build \
@@ -125,20 +83,18 @@ jobs:
           echo "Zipping: $APP_PATH"
           ditto -c -k --sequesterRsrc --keepParent "$APP_PATH" "out/subzero-simulator.zip"
 
-      # 2) Build device unsigned
       - name: Build device app (no signing)
         run: |
           set -o pipefail
           xcodebuild \
-            -workspace "$WORKSPACE_PATH" \
-            -scheme "$SCHEME_NAME" \
+            -project native/CineFlash/CineFlash.xcodeproj \
+            -scheme CineFlash \
             -configuration Release \
             -sdk iphoneos \
             -derivedDataPath build \
             CODE_SIGNING_ALLOWED=NO CODE_SIGN_IDENTITY="" \
             2>&1 | tee -a build.log | xcpretty || exit 1
 
-      # 3a) Firma opzionale con certificato dai secrets
       - name: Import certificate and sign (optional)
         if: inputs.sign_ios == true
         env:
@@ -174,7 +130,6 @@ jobs:
           IDENTITY=$(security find-identity -v -p codesigning "$KEYCHAIN_PATH" | grep -m1 "iPhone Distribution\|Apple Distribution\|iPhone Developer\|Apple Development" | sed -E 's/.*"(.*)"/\1/')
           echo "Signing with identity: $IDENTITY"
 
-          # Firma prima framework e dylib, poi l'app
           find "$APP_PATH" -name "*.framework" -o -name "*.dylib" | while read -r fw; do
             /usr/bin/codesign --force --sign "$IDENTITY" "$fw" || true
           done
@@ -184,7 +139,6 @@ jobs:
             --generate-entitlement-der \
             "$APP_PATH"
 
-      # 3b) Package IPA unsigned
       - name: Package unsigned IPA
         if: inputs.sign_ios != true
         run: |
@@ -192,7 +146,6 @@ jobs:
           cp -R build/Build/Products/Release-iphoneos/*.app ipa/Payload/
           ditto -c -k --sequesterRsrc --keepParent ipa/Payload out/subzero-unsigned.ipa
 
-      # 3c) Package IPA firmata
       - name: Package signed IPA
         if: inputs.sign_ios == true
         run: |
@@ -220,7 +173,5 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: ios-build-log
-          path: |
-            build.log
-            prebuild.log
+          path: build.log
           if-no-files-found: ignore

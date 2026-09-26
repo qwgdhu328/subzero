@@ -10,7 +10,8 @@ import { styles as s } from "../src/theme";
 /**
  * Privacy policy dell'app, mostrata dentro l'app (richiesta da Apple 5.1.1(i)
  * e Google Play User Data). Riflette il comportamento REALE del codice:
- * dati solo in locale, nessun account, nessun analytics, AI on-device.
+ * dati solo in locale, nessun account, nessun analytics; l'AI usa un
+ * servizio online per testo e nient'altro.
  */
 export default function PrivacyScreen() {
   const router = useRouter();
@@ -44,8 +45,9 @@ export default function PrivacyScreen() {
 
         <Section title="Dati che l'app salva sul telefono">
           <Bullet>Notizie salvate e cache delle notizie (per la lettura offline)</Bullet>
+          <Bullet>Articoli riscritti dall'AI (cache per non rifare il lavoro)</Bullet>
           <Bullet>Watchlist dei film e promemoria di uscita</Bullet>
-          <Bullet>Impostazioni: fonti RSS, chiave TMDB personale (se ne inserisci una), preferenze AI</Bullet>
+          <Bullet>Impostazioni: chiave TMDB personale (se ne inserisci una), preferenze AI</Bullet>
           <Bullet>
             Se attivi “Ordina i cinema per distanza”, la posizione è usata{" "}
             <B> solo in memoria</B> per calcolare la distanza dei cinema:
@@ -53,22 +55,33 @@ export default function PrivacyScreen() {
           </Bullet>
         </Section>
 
-        <Section title="AI locale (✨)">
+        <Section title="AI (✨ e ☁️)">
           <P>
-            La funzione “Spiega con l'AI” usa un modello linguistico che gira{" "}
-            <B>interamente sul tuo telefono</B> (llama.cpp). Il modello si
-            scarica una sola volta da Hugging Face e resta sul dispositivo.
-            Notizie e film che analizziamo con l'AI <B>non lasciano mai</B> il
-            telefono: nessuna richiesta viene inviata a server di AI online.
-            Puoi disattivare l'AI dalle Impostazioni o eliminare il modello per
-            liberare spazio.
+            La funzione “Spiega con l'AI” e la chat usano un servizio AI online
+            a costo zero per te: vengono inviati solo il testo della tua domanda
+            e il contenuto che vuoi far spiegare (titolo, trama o articolo).
+            La riscrittura degli articoli usa lo stesso tipo di servizio. Le tue
+            liste, le impostazioni e la cronologia di lettura restano invece
+            solo sul telefono.
+          </P>
+        </Section>
+
+        <Section title="Articoli riscritti dalla redazione AI">
+          <P>
+            Le notizie raccolte dalle testate di cinema vengono{' '}
+            <B>riscritte in articoli più chiari</B> da un servizio di scrittura
+            AI: per farlo, il testo pubblico della notizia (titolo, sommario e
+            articolo originale) è inviato a quel servizio, che restituisce il
+            testo riscritto. <B>Non vengono inviati dati personali</B>: né
+            nome, né email, né identificativi, né la tua posizione. Le immagini
+            degli articoli sono scaricate direttamente dai siti delle testate.
           </P>
         </Section>
 
         <Section title="Servizi di terze parti usati per i contenuti">
           <Bullet>
-            <B>Feed RSS delle testate</B> che scegli di seguire: l'app scarica
-            i titoli e i riassuni pubblici dei siti di cinema.
+            <B>Feed RSS delle testate</B>: l'app scarica i titoli e i riassuni
+            pubblici dei siti di cinema per prepararli alla riscrittura AI.
           </Bullet>
           <Bullet>
             <B>TMDB</B> (The Movie Database) e <B>iTunes Search API di Apple</B>:
@@ -110,16 +123,17 @@ export default function PrivacyScreen() {
             Se attivi gli avvisi, l'app programma notifiche locali sul tuo
             dispositivo (nuove notizie, aperture prevendite, uscite dei film che
             segui). Le notifiche non passano da server esterni: nascono sul
-            telefono. Puoi disattivarle dalle Impostazioni o da iOS.
+            telefono. Puoi disattivarle dalle Impostazioni o dalle
+            impostazioni di sistema.
           </P>
         </Section>
 
         <Section title="Cancellazione dei dati">
           <P>
             Non essendoci account, non c'è nulla da cancellare sui nostri
-            server. Per rimuovere ogni dato: disinstalla l'app, oppure da iOS
-            “Impostazioni → Generali → Spazio iPhone → CineFlash → Cancella app”.
-            Questo elimina cache, liste e il modello AI scaricato.
+            server. Per rimuovere ogni dato: disinstalla l'app, oppure svuota
+            le liste e la cache dalla sezione “Gestione dati” delle
+            Impostazioni. Questo elimina cache, liste e impostazioni.
           </P>
         </Section>
 

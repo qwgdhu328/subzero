@@ -1,10 +1,11 @@
-import React, { useCallback, useEffect, useRef, useState } from "react";
+import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   FlatList,
   Image,
   Platform,
   Pressable,
   RefreshControl,
+  ScrollView,
   StyleSheet,
   Text,
   View,
@@ -23,7 +24,7 @@ import { isPreSale, isUpcoming } from "../src/logic/alerts";
 import { timeAgo } from "../src/logic/news";
 import { findMovieFromNewsTitle } from "../src/logic/itunes";
 import { NewsItem } from "../src/models/types";
-import { EmptyState, Spinner } from "../src/components/ui";
+import { EmptyState, Spinner, TextInput } from "../src/components/ui";
 import { DetailMovie, MovieDetailSheet } from "../src/components/MovieDetailSheet";
 
 /**
@@ -41,7 +42,28 @@ export default function UpcomingScreen() {
   const [refreshing, setRefreshing] = useState(false);
   const [searching, setSearching] = useState(false);
   const [detail, setDetail] = useState<DetailMovie | null>(null);
+  const [query, setQuery] = useState("");
+  const [sourceFilter, setSourceFilter] = useState<string | "all">("all");
   const mountedRef = useRef(false);
+
+  /* Tutte le fonti presenti nella lista (per i filtri) */
+  const sourceNames = useMemo(
+    () => [...new Set(items.map((x) => x.source))],
+    [items]
+  );
+
+  /* Lista filtrata: fonte + ricerca locale su titolo e sommario */
+  const visible = useMemo(() => {
+    let list = items;
+    if (sourceFilter !== "all") list = list.filter((x) => x.source === sourceFilter);
+    const q = query.trim().toLowerCase();
+    if (q.length >= 2) {
+      list = list.filter(
+        (x) => x.title.toLowerCase().includes(q) || (x.summary ?? "").toLowerCase().includes(q)
+      );
+    }
+    return list;
+  }, [items, sourceFilter, query]);
 
   const load = useCallback(async (silent: boolean) => {
     if (!silent) setRefreshing(true);
@@ -160,7 +182,7 @@ export default function UpcomingScreen() {
     <View style={s.screen}>
       <Stack.Screen options={{ headerShown: false }} />
       <FlatList
-        data={items}
+        data={visible}
         keyExtractor={(x) => x.id}
         renderItem={renderItem}
         contentContainerStyle={{ paddingBottom: 40 + insets.bottom }}
@@ -189,6 +211,87 @@ export default function UpcomingScreen() {
               <Text style={[styles.pageTitle, { fontFamily: fonts.serif }]} numberOfLines={1}>
                 {title && title.length > 0 ? title : "Film in arrivo"}
               </Text>
+              {/* Ricerca locale nella lista */}
+              <View style={{ marginTop: 10 }}>
+                <View style={s.row}>
+                  <View style={s.grow}>
+                    <TextInput
+                      value={query}
+                      onChangeText={setQuery}
+                      placeholder="Cerca tra gli annunci…"
+                      autoCapitalize="sentences"
+                    />
+                  </View>
+                  {query.trim().length > 0 ? (
+                    <Pressable
+                      onPress={() => {
+                        Haptics.selectionAsync();
+                        setQuery("");
+                      }}
+                      hitSlop={8}
+                      style={styles.clearBtn}
+                    >
+                      <Text style={styles.clearBtnText}>✕</Text>
+                    </Pressable>
+                  ) : null}
+                </View>
+              </View>
+              {/* Filtri fonte */}
+              {sourceNames.length > 1 ? (
+                <ScrollView
+                  horizontal
+                  showsHorizontalScrollIndicator={false}
+                  contentContainerStyle={[styles.chipRow, { marginTop: 10 }]}
+                >
+                  <Pressable
+                    onPress={() => {
+                      Haptics.selectionAsync();
+                      setSourceFilter("all");
+                    }}
+                  >
+                    <View
+                      style={[
+                        styles.fChip,
+                        sourceFilter === "all" && styles.fChipOn,
+                      ]}
+                    >
+                      <Text
+                        style={[
+                          styles.fChipText,
+                          sourceFilter === "all" && styles.fChipTextOn,
+                        ]}
+                      >
+                        Tutte
+                      </Text>
+                    </View>
+                  </Pressable>
+                  {sourceNames.map((name) => (
+                    <Pressable
+                      key={name}
+                      onPress={() => {
+                        Haptics.selectionAsync();
+                        setSourceFilter(name);
+                      }}
+                    >
+                      <View
+                        style={[
+                          styles.fChip,
+                          sourceFilter === name && styles.fChipOn,
+                        ]}
+                      >
+                        <Text
+                          style={[
+                            styles.fChipText,
+                            sourceFilter === name && styles.fChipTextOn,
+                          ]}
+                        >
+                          {name}
+                        </Text>
+                      </View>
+                    </Pressable>
+                  ))}
+                </ScrollView>
+              ) : null}
             </View>
 
             {/* Hero con il conteggio */}
@@ -220,6 +323,18 @@ export default function UpcomingScreen() {
         ListEmptyComponent={
           loading ? (
             <Spinner label="Carico i film in arrivo…" />
+          ) : query.trim().length >= 2 || sourceFilter !== "all" ? (
+            <EmptyState
+              icon="🔍"
+              title="Nessun annuncio trovato"
+              subtitle="Prova con parole diverse o ripristina il filtro “Tutte”."
+            />
+          ) : refreshing ? (
+            <EmptyState
+              icon="📡"
+              title="Aggiorno i feed…"
+              subtitle="Sto controllando se ci sono nuovi annunci."
+            />
           ) : (
             <EmptyState
               icon="📅"
@@ -250,7 +365,6 @@ export default function UpcomingScreen() {
         onClose={() => setDetail(null)}
         onOpenAI={explainMovieWithAI}
         watchlist={watchlist}
-        aiDisabled={settings.aiDisabled}
       />
     </View>
   );
@@ -297,7 +411,7 @@ const styles = StyleSheet.create({
     justifyContent: "center",
     ...Platform.select({
       ios: {},
-      default: { backgroundColor: "rgba(255,255,255,0.10)" },
+      default: { backgroundColor: theme.colors.surfaceAlt },
     }),
   },
   backText: {
@@ -322,9 +436,10 @@ const styles = StyleSheet.create({
     marginBottom: 8,
     paddingHorizontal: 18,
     paddingVertical: 16,
-    borderRadius: theme.radius.lg,
-    borderWidth: 1,
+    borderRadius: theme.radius.xl,
+    borderWidth: StyleSheet.hairlineWidth,
     borderColor: theme.colors.border,
+    backgroundColor: theme.colors.surfaceAlt,
     gap: 12,
   },
   heroIcon: { fontSize: 30 },
@@ -399,11 +514,38 @@ const styles = StyleSheet.create({
     bottom: 32,
     alignSelf: "center",
     backgroundColor: theme.colors.surfaceRaised,
-    borderWidth: 1,
+    borderWidth: StyleSheet.hairlineWidth,
     borderColor: theme.colors.border,
     borderRadius: 999,
     paddingHorizontal: 16,
     paddingVertical: 10,
   },
   searchingText: { color: theme.colors.text, fontSize: 13, fontWeight: "600" },
+  clearBtn: {
+    width: 34,
+    height: 34,
+    borderRadius: 17,
+    marginLeft: 8,
+    alignItems: "center",
+    justifyContent: "center",
+    borderWidth: StyleSheet.hairlineWidth,
+    borderColor: theme.colors.border,
+    backgroundColor: theme.colors.surfaceAlt,
+  },
+  clearBtnText: { color: theme.colors.textDim, fontSize: 13, fontWeight: "700" },
+  chipRow: { paddingRight: 16, gap: 6 },
+  fChip: {
+    paddingHorizontal: 11,
+    paddingVertical: 5,
+    borderRadius: 999,
+    borderWidth: StyleSheet.hairlineWidth,
+    borderColor: theme.colors.border,
+    backgroundColor: theme.colors.surfaceAlt,
+  },
+  fChipOn: {
+    backgroundColor: theme.colors.text,
+    borderColor: theme.colors.text,
+  },
+  fChipText: { color: theme.colors.textDim, fontSize: 12, fontWeight: "600" },
+  fChipTextOn: { color: theme.colors.onAccent, fontWeight: "700" },
 });

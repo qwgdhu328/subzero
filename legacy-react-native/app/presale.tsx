@@ -29,7 +29,14 @@ import {
   fetchItunesMovies,
 } from "../src/logic/itunes";
 import { Movie } from "../src/models/types";
-import { EmptyState, Spinner } from "../src/components/ui";
+import { EmptyState, Spinner, TextInput } from "../src/components/ui";
+import {
+  applyCuration,
+  isAlreadyReleased,
+  loadCuration,
+  CurationState,
+} from "../src/logic/movieCuration";
+import { useFocusEffect } from "expo-router";
 import { DetailMovie, MovieDetailSheet } from "../src/components/MovieDetailSheet";
 import { BookingSheet } from "../src/components/BookingSheet";
 
@@ -52,6 +59,29 @@ export default function PresaleScreen() {
   const [detail, setDetail] = useState<DetailMovie | null>(null);
   /** Film per cui è aperto il flusso di prenotazione (città → cinema). */
   const [booking, setBooking] = useState<DetailMovie | null>(null);
+  /** Ordinamento della griglia (fuori dall'in evidenza). */
+  const [sortBy, setSortBy] = useState<"date" | "vote" | "title">("date");
+  /** Decisioni della redazione AI (da /ai-dashboard). */
+  const [curation, setCuration] = useState<CurationState>({
+    promoted: [],
+    hidden: [],
+    generatedAt: null,
+    note: null,
+  });
+
+  // Ricarica la curation al ritorno sulla pagina (dopo la Dashboard AI)
+  useFocusEffect(
+    useCallback(() => {
+      loadCuration().then(setCuration).catch(() => {});
+    }, [])
+  );
+
+  /** Conto alla rovescia live fino alle 9:00 del giorno d'uscita. */
+  const [nowTick, setNowTick] = useState(() => Date.now());
+  useEffect(() => {
+    const t = setInterval(() => setNowTick(Date.now()), 30_000);
+    return () => clearInterval(t);
+  }, []);
 
   /* ---------- Catalogo film prenotabili ---------- */
 
@@ -127,18 +157,37 @@ export default function PresaleScreen() {
 
   /* ---------- In evidenza: il film più vicino all'uscita ---------- */
 
+  /* Catalogo curato dalla redazione AI: nascosti rimossi, promossi in testa.
+  I film già usciti da più di 7 giorni escono dalla prevendita: qui restano
+  solo uscite future e film appena arrivati in sala. */
+  const curated = useMemo(
+    () => applyCuration(movies, curation).filter((m) => !isAlreadyReleased(m.releaseDate)),
+    [movies, curation]
+  );
+
   const featured = useMemo(() => {
-    const withDays = movies
+    const withDays = curated
       .map((m) => ({ m, d: daysUntil(m.releaseDate) }))
       .filter((x) => x.d !== null && x.d >= -2) // già usciti da ≤2 giorni ok
       .sort((a, b) => (a.d as number) - (b.d as number));
-    return (withDays[0]?.m ?? movies[0] ?? null) as DetailMovie | null;
-  }, [movies]);
+    return (withDays[0]?.m ?? curated[0] ?? null) as DetailMovie | null;
+  }, [curated]);
 
-  const rest = useMemo(
-    () => movies.filter((m) => m.id !== featured?.id),
-    [movies, featured]
-  );
+  const rest = useMemo(() => {
+    const list = curated.filter((m) => m.id !== featured?.id);
+    const byDate = (a: DetailMovie, b: DetailMovie) => {
+      const da = a.releaseDate ? Date.parse(a.releaseDate) : Infinity;
+      const db = b.releaseDate ? Date.parse(b.releaseDate) : Infinity;
+      return da - db;
+    };
+    if (sortBy === "vote") {
+      return [...list].sort((a, b) => b.voteAverage - a.voteAverage);
+    }
+    if (sortBy === "title") {
+      return [...list].sort((a, b) => a.title.localeCompare(b.title, "it"));
+    }
+    return [...list].sort(byDate);
+  }, [movies, featured, sortBy]);
 
   /* Sezioni per finestra di uscita: Oggi / Questa settimana / Più avanti */
   const sections = useMemo(() => {
@@ -161,6 +210,7 @@ export default function PresaleScreen() {
   /** Card singola (usata dentro le coppie della griglia). */
   const renderCard = (item: DetailMovie) => {
     const days = daysUntil(item.releaseDate);
+    const starred = watchlist.isIn(String(item.id));
     return (
       <Pressable
         onPress={() => openDetail(item)}
@@ -175,11 +225,24 @@ export default function PresaleScreen() {
               </Text>
             </View>
           )}
+          <Pressable
+            onPress={() =>
+              watchlist.toggle({
+                id: String(item.id),
+                title: item.title,
+                posterPath: item.posterPath,
+              })
+            }
+            hitSlop={6}
+            style={styles.cardStar}
+          >
+            <Text style={styles.cardStarText}>{starred ? "⭐" : "☆"}</Text>
+          </Pressable>
         </View>
         <Text style={styles.cardTitle} numberOfLines={2}>
           {item.title}
         </Text>
-        <Text style={styles.cardDate} numberOfLines={1}>
+        <Text style={styles.cardDate} numberOfLines={2}>
           {fmtReleaseDate(item.releaseDate)}
         </Text>
         <Pressable
@@ -193,13 +256,18 @@ export default function PresaleScreen() {
     );
   };
 
-  /* Modello a righe: intestazioni di sezione + coppie di card (griglia 2 col) */
+  /* Modello a righe: intestazioni di sezione + coppie di card (griglia 2 col).
+  Con ordinamento diverso da "data" le sezioni collassano in una sola. */
   type Row =
     | { kind: "section"; key: string; label: string; count: number }
     | { kind: "pair"; key: string; a: DetailMovie; b: DetailMovie | null };
   const listRows = useMemo<Row[]>(() => {
     const rows: Row[] = [];
-    for (const sec of sections) {
+    const secs =
+      sortBy === "date"
+        ? sections
+        : [{ label: "TUTTI I TITOLI", items: rest }];
+    for (const sec of secs) {
       rows.push({
         kind: "section",
         key: `sec_${sec.label}`,
@@ -216,7 +284,7 @@ export default function PresaleScreen() {
       }
     }
     return rows;
-  }, [sections]);
+  }, [sections, rest, sortBy]);
 
   const renderItem = ({ item }: { item: Row }) => {
     if (item.kind === "section") {
@@ -273,6 +341,35 @@ export default function PresaleScreen() {
               <Text style={styles.pageTitle}>
                 {title && title.length > 0 ? title : "Prevendite"}
               </Text>
+              {/* Ordinamento: data di uscita / voto / titolo */}
+              <View style={[s.row, { marginTop: 10, flexWrap: "wrap", gap: 6 }]}>
+                {(
+                  [
+                    { key: "date", label: "📅 Data" },
+                    { key: "vote", label: "⭐ Voto" },
+                    { key: "title", label: "A–Z" },
+                  ] as const
+                ).map((o) => (
+                  <Pressable
+                    key={o.key}
+                    onPress={() => {
+                      Haptics.selectionAsync();
+                      setSortBy(o.key);
+                    }}
+                  >
+                    <View style={[styles.sortChip, sortBy === o.key && styles.sortChipOn]}>
+                      <Text
+                        style={[
+                          styles.sortChipText,
+                          sortBy === o.key && styles.sortChipTextOn,
+                        ]}
+                      >
+                        {o.label}
+                      </Text>
+                    </View>
+                  </Pressable>
+                ))}
+              </View>
             </View>
 
             {/* In evidenza */}
@@ -298,10 +395,11 @@ export default function PresaleScreen() {
                     <Text style={styles.featuredKicker}>
                       {releaseKicker(featured.releaseDate)}
                     </Text>
+                    <CountdownText releaseDate={featured.releaseDate} now={nowTick} />
                     <Text style={styles.featuredTitle} numberOfLines={3}>
                       {featured.title}
                     </Text>
-                    <Text style={styles.featuredDate} numberOfLines={1}>
+                    <Text style={styles.featuredDate} numberOfLines={2}>
                       {fmtReleaseDate(featured.releaseDate)}
                     </Text>
                     <Pressable
@@ -374,7 +472,6 @@ export default function PresaleScreen() {
           });
         }}
         watchlist={watchlist}
-        aiDisabled={settings.aiDisabled}
         onBook={bookMovie}
       />
     </View>
@@ -398,6 +495,40 @@ function releaseKicker(iso: string | null): string {
   if (d <= 0) return "AL CINEMA DA OGGI";
   if (d === 1) return "ESCE DOMANI";
   return `ESCE TRA ${d} GIORNI`;
+}
+
+/**
+ * Countdown live per la card in evidenza: giorni, ore e minuti fino alle
+ * 9:00 del giorno d'uscita. Si aggiorna da solo (tick ogni 30s dal parent).
+ */
+function CountdownText({
+  releaseDate,
+  now,
+}: {
+  releaseDate: string | null;
+  now: number;
+}) {
+  const target = useMemo(() => {
+    if (!releaseDate) return null;
+    const d = new Date(releaseDate);
+    if (isNaN(d.getTime())) return null;
+    d.setHours(9, 0, 0, 0);
+    return d.getTime();
+  }, [releaseDate]);
+
+  const diff = target != null ? target - now : 0;
+  if (target == null || diff <= 0) return null;
+
+  const days = Math.floor(diff / 86_400_000);
+  const hours = Math.floor((diff % 86_400_000) / 3_600_000);
+  const mins = Math.floor((diff % 3_600_000) / 60_000);
+
+  return (
+    <Text style={styles.countdown}>
+      {days > 0 ? `${days}g ` : ""}
+      {String(hours).padStart(2, "0")}:{String(mins).padStart(2, "0")}
+    </Text>
+  );
 }
 
 /** Poster con fallback automatico. */
@@ -441,7 +572,7 @@ const styles = StyleSheet.create({
     justifyContent: "center",
     ...Platform.select({
       ios: {},
-      default: { backgroundColor: "rgba(255,255,255,0.10)" },
+      default: { backgroundColor: theme.colors.surfaceAlt },
     }),
   },
   backText: {
@@ -474,8 +605,8 @@ const styles = StyleSheet.create({
   /* Card in evidenza */
   featured: {
     marginHorizontal: 16,
-    borderRadius: theme.radius.lg,
-    borderWidth: 1,
+    borderRadius: theme.radius.xl,
+    borderWidth: StyleSheet.hairlineWidth,
     borderColor: theme.colors.border,
     overflow: "hidden",
   },
@@ -509,16 +640,51 @@ const styles = StyleSheet.create({
     fontSize: 12,
     fontVariant: ["tabular-nums"],
   },
+  countdown: {
+    color: theme.colors.accent,
+    fontSize: 13,
+    fontWeight: "800",
+    fontVariant: ["tabular-nums"],
+    letterSpacing: 1,
+  },
+  sortChip: {
+    paddingHorizontal: 11,
+    paddingVertical: 5,
+    borderRadius: 999,
+    borderWidth: StyleSheet.hairlineWidth,
+    borderColor: theme.colors.border,
+    backgroundColor: theme.colors.surfaceAlt,
+  },
+  sortChipOn: {
+    backgroundColor: theme.colors.accent,
+    borderColor: theme.colors.accent,
+  },
+  sortChipText: { color: theme.colors.textDim, fontSize: 11, fontWeight: "700" },
+  sortChipTextOn: { color: theme.colors.onAccent, fontWeight: "800" },
+  cardStar: {
+    position: "absolute",
+    bottom: 6,
+    right: 6,
+    width: 30,
+    height: 30,
+    borderRadius: 15,
+    alignItems: "center",
+    justifyContent: "center",
+    backgroundColor: "rgba(10,10,15,0.72)",
+    borderWidth: StyleSheet.hairlineWidth,
+    borderColor: theme.colors.border,
+  },
+  cardStarText: { fontSize: 14 },
   featuredBook: {
     marginTop: 8,
     alignSelf: "flex-start",
     backgroundColor: theme.colors.accent,
-    borderRadius: theme.radius.sm,
-    paddingHorizontal: 14,
-    paddingVertical: 9,
+    borderRadius: 999,
+    paddingHorizontal: 16,
+    paddingVertical: 10,
   },
   featuredBookText: {
-    color: theme.colors.bg,
+    color: theme.colors.onAccent,
     fontSize: 13,
     fontWeight: "800",
   },
@@ -575,8 +741,8 @@ const styles = StyleSheet.create({
   },
   card: {
     flex: 1,
-    backgroundColor: theme.colors.surface,
-    borderWidth: 1,
+    backgroundColor: theme.colors.surfaceRaised,
+    borderWidth: StyleSheet.hairlineWidth,
     borderColor: theme.colors.border,
     borderRadius: theme.radius.md,
     padding: 10,
@@ -602,7 +768,7 @@ const styles = StyleSheet.create({
     paddingVertical: 3,
   },
   soonBadgeText: {
-    color: theme.colors.bg,
+    color: theme.colors.onAccent,
     fontSize: 9,
     fontWeight: "800",
     letterSpacing: 0.8,
