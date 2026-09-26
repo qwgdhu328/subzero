@@ -185,12 +185,12 @@ enum NewsService {
 
         var seen = Set<String>()
         let deduped = all.filter { seen.insert($0.id).inserted }
-        deduped.sort { a, b in
+        let sortedItems = deduped.sorted { a, b in
             let ta = a.publishedAt.flatMap { ISO8601DateFormatter().date(from: $0) }?.timeIntervalSince1970 ?? 0
             let tb = b.publishedAt.flatMap { ISO8601DateFormatter().date(from: $0) }?.timeIntervalSince1970 ?? 0
             return ta > tb
         }
-        return (deduped, failed)
+        return (sortedItems, failed)
     }
 
     // MARK: Avvisi (porting di alerts.ts)

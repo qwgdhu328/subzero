@@ -80,9 +80,10 @@ struct PresaleView: View {
     }
 
     private var sections: [(label: String, items: [Movie])] {
-        guard sortBy == .date else { return [("TUTTI I TITOLI", rest)] }
-        var buckets: [(String, [Movie])] = [
-            ("IN USCITA ORA", []), ("QUESTA SETTIMANA", []), ("PIÙ AVANTI", []), ("DATA DA DEFINIRE", []),
+        guard sortBy == .date else { return [(label: "TUTTI I TITOLI", items: rest)] }
+        var buckets: [(label: String, items: [Movie])] = [
+            (label: "IN USCITA ORA", items: []), (label: "QUESTA SETTIMANA", items: []),
+            (label: "PIÙ AVANTI", items: []), (label: "DATA DA DEFINIRE", items: []),
         ]
         for m in rest {
             let d = Curation.daysUntil(m.releaseDate)
