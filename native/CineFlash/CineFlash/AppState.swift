@@ -62,6 +62,7 @@ final class AppState: ObservableObject {
         if !fresh.isEmpty {
             newIds.formUnion(fresh.map(\.id))
             newCount += fresh.count
+            updateLiveActivity(fresh: fresh)
         }
         if !failed.isEmpty && newsItems.isEmpty {
             newsError = "Nessun feed raggiungibile (\(failed.joined(separator: ", ")))."
@@ -83,6 +84,27 @@ final class AppState: ObservableObject {
     func showNew() {
         newCount = 0
         newIds = []
+        NewsActivityManager.shared.endAll()
+    }
+
+    /// Aggiorna l'Isola Dinamica con l'ultima novità (prevendite prioritarie).
+    private func updateLiveActivity(fresh: [NewsItem]) {
+        let presales = fresh.filter(NewsService.isPreSale)
+        let latest = presales.first ?? fresh.first
+        guard let item = latest else { return }
+        let isPresale = presales.contains(where: { $0.id == item.id })
+        let detail: String
+        if fresh.count == 1 {
+            detail = item.source
+        } else {
+            detail = "\(fresh.count) novità · ultima da \(item.source)"
+        }
+        NewsActivityManager.shared.showNews(
+            emoji: isPresale ? "🎟️" : "📰",
+            headline: item.title,
+            detail: detail,
+            newCount: newCount
+        )
     }
 
     // MARK: AI redazione (coda a concorrenza limitata)
