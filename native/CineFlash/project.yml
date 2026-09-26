@@ -52,6 +52,14 @@ targets:
       - path: Shared
     info:
       path: CineFlashWidget/Info.plist
+      properties:
+        CFBundleDisplayName: CineFlash Notizie
+        CFBundleShortVersionString: "2.0"
+        CFBundleVersion: "1"
+        CFBundlePackageType: XPC!
+        NSSupportsLiveActivities: true
+        NSExtension:
+          NSExtensionPointIdentifier: com.apple.widgetkit-extension
     settings:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: com.cineflash.app.widget
