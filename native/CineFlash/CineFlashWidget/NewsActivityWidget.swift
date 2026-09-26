@@ -3,7 +3,7 @@ import WidgetKit
 import SwiftUI
 
 /// UI della Live Activity sull'Isola Dinamica e in schermata di blocco.
-@main
+/// Registrata da CineFlashWidgetBundle (niente @main qui: un solo entry point).
 struct NewsActivityWidget: Widget {
     var body: some WidgetConfiguration {
         ActivityConfiguration(for: NewsActivityAttributes.self) { context in
@@ -24,7 +24,7 @@ struct NewsActivityWidget: Widget {
                         Text("CineFlash")
                             .font(.system(size: 11, weight: .heavy))
                             .kerning(1.4)
-                            .foregroundColor(Color(hex: 0xC93B2F))
+                            .foregroundColor(Color(hexValue: 0xC93B2F))
                         Text(context.state.headline)
                             .font(.system(size: 14, weight: .bold))
                             .foregroundColor(.white)
@@ -37,7 +37,7 @@ struct NewsActivityWidget: Widget {
                             .font(.system(size: 20, weight: .heavy, design: .rounded))
                             .foregroundColor(.white)
                             .padding(10)
-                            .background(Circle().fill(Color(hex: 0xC93B2F)))
+                            .background(Circle().fill(Color(hexValue: 0xC93B2F)))
                     }
                 }
                 DynamicIslandExpandedRegion(.bottom) {
@@ -63,16 +63,16 @@ struct NewsActivityWidget: Widget {
                         .font(.system(size: 12, weight: .heavy, design: .rounded))
                         .foregroundColor(.white)
                         .padding(4)
-                        .background(Circle().fill(Color(hex: 0xC93B2F)))
+                        .background(Circle().fill(Color(hexValue: 0xC93B2F)))
                 } else {
                     Circle()
-                        .fill(Color(hex: 0xC93B2F))
+                        .fill(Color(hexValue: 0xC93B2F))
                         .frame(width: 8, height: 8)
                 }
             } minimal: {
                 // MARK: Isola minimal (quando ci sono più activity)
                 Circle()
-                    .fill(Color(hex: 0xC93B2F))
+                    .fill(Color(hexValue: 0xC93B2F))
                     .frame(width: 8, height: 8)
             }
             .widgetURL(URL(string: "cineflash://news"))
@@ -88,7 +88,7 @@ private struct LockScreenNewsView: View {
         HStack(spacing: 12) {
             ZStack {
                 Circle()
-                    .fill(Color(hex: 0xC93B2F))
+                    .fill(Color(hexValue: 0xC93B2F))
                 Text(state.emoji)
                     .font(.system(size: 22))
             }
@@ -98,7 +98,7 @@ private struct LockScreenNewsView: View {
                 Text("CINEFLASH")
                     .font(.system(size: 10, weight: .heavy))
                     .kerning(1.6)
-                    .foregroundColor(Color(hex: 0xF4F1EA).opacity(0.7))
+                    .foregroundColor(Color(hexValue: 0xF4F1EA).opacity(0.7))
                 Text(state.headline)
                     .font(.system(size: 15, weight: .bold))
                     .foregroundColor(.white)
@@ -128,12 +128,5 @@ extension Color {
                   green: Double((hexValue >> 8) & 0xFF) / 255,
                   blue: Double(hexValue & 0xFF) / 255,
                   opacity: opacity)
-    }
-}
-
-/// Trucco per riutilizzare la sintassi Color(hex:) con valore numerico.
-private extension Color {
-    init(hex: UInt32) {
-        self.init(hexValue: hex)
     }
 }
