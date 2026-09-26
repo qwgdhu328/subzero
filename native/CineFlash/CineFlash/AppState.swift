@@ -91,32 +91,48 @@ final class AppState: ObservableObject {
 
     func ensureAiArticles(limit: Int = 12, concurrency: Int = 3) async {
         guard !newsItems.isEmpty else { return }
-        let pending = newsItems.prefix(limit).filter { !aiArticles.keys.contains($0.id) && !aiInFlight.contains($0.id) }
+        let pending = newsItems.prefix(limit).filter {
+            !aiArticles.keys.contains($0.id) && !aiInFlight.contains($0.id)
+        }
         guard !pending.isEmpty else { return }
 
         await withTaskGroup(of: Void.self) { group in
-            var active = 0
-            var cursor = pending.startIndex
-            func addWorker() {
-                guard cursor < pending.endIndex else { return }
-                let item = pending[cursor]
-                cursor += 1
-                active += 1
+            for item in pending.prefix(concurrency) {
                 aiInFlight.insert(item.id)
                 group.addTask { [weak self] in
-                    guard let self else { return }
                     if let art = await AIService.rewriteArticle(item) {
                         await MainActor.run {
-                            self.aiArticles[art.id] = art
+                            self?.aiArticles[art.id] = art
                             Store.saveAiArticle(art)
                         }
                     }
                     await MainActor.run {
-                        self.aiInFlight.remove(item.id)
+                        self?.aiInFlight.remove(item.id)
                     }
                 }
             }
-            while active < concurrency && cursor < pending.endIndex { addWorker() }
+            await group.waitForAll()
+        }
+
+        // Seconda ondata se ci sono ancora titoli in attesa
+        let stillPending = newsItems.prefix(limit).filter {
+            !aiArticles.keys.contains($0.id) && !aiInFlight.contains($0.id)
+        }
+        await withTaskGroup(of: Void.self) { group in
+            for item in stillPending {
+                aiInFlight.insert(item.id)
+                group.addTask { [weak self] in
+                    if let art = await AIService.rewriteArticle(item) {
+                        await MainActor.run {
+                            self?.aiArticles[art.id] = art
+                            Store.saveAiArticle(art)
+                        }
+                    }
+                    await MainActor.run {
+                        self?.aiInFlight.remove(item.id)
+                    }
+                }
+            }
             await group.waitForAll()
         }
     }

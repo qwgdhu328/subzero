@@ -58,7 +58,7 @@ struct PresaleView: View {
 
     private var featured: Movie? {
         let withDays = curated.compactMap { m -> (Movie, Int)? in
-            guard let d = Curation.daysUntil($0.releaseDate), d >= -2 else { return nil }
+            guard let d = Curation.daysUntil(m.releaseDate), d >= -2 else { return nil }
             return (m, d)
         }.sorted { $0.1 < $1.1 }
         return withDays.first?.0 ?? curated.first

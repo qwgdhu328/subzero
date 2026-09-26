@@ -174,21 +174,24 @@ struct PillButton: View {
                 .padding(.vertical, 15)
                 .padding(.horizontal, 22)
                 .frame(maxWidth: .infinity)
+                .foregroundColor(textColor)
                 .background(
                     RoundedRectangle(cornerRadius: 999)
-                        .fill(foreground.opacity(filled ? (role == .destructive ? 1 : 1) : 0))
+                        .fill(fillColor)
                 )
                 .overlay(
                     RoundedRectangle(cornerRadius: 999)
-                        .stroke(filled ? .clear : Theme.border, lineWidth: 0.5)
+                        .stroke(strokeColor, lineWidth: 0.5)
                 )
-                .background(filled ? .clear : Theme.surfaceAlt.cornerRadius(999))
-                .foregroundColor(textColor)
                 .opacity(configuration.isPressed ? 0.7 : 1)
                 .scaleEffect(configuration.isPressed ? 0.97 : 1)
         }
-        private var foreground: Color {
-            role == .destructive ? Theme.danger : Theme.accent
+        private var fillColor: Color {
+            if filled { return role == .destructive ? Theme.danger : Theme.accent }
+            return Theme.surfaceAlt
+        }
+        private var strokeColor: Color {
+            filled ? Color.clear : Theme.border
         }
         private var textColor: Color {
             filled ? Theme.onAccent : (role == .destructive ? Theme.danger : Theme.text)

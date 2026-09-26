@@ -38,6 +38,9 @@ struct CatalogView: View {
                 .refreshable { await load(force: true) }
             }
             .navigationBarHidden(true)
+            .navigationDestination(for: DetailRoute.self) { route in
+                route.destination
+            }
             .sheet(item: $detail) { m in
                 MovieDetailSheet(movie: m)
                     .environmentObject(app)

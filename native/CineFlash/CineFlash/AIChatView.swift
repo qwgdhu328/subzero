@@ -14,37 +14,31 @@ struct ChatView: View {
 
     var body: some View {
         VStack(spacing: 0) {
-            ScrollViewReader { proxy in
-                ScrollView {
-                    VStack(spacing: 10) {
-                        if messages.isEmpty && !streaming {
-                            welcome
-                        }
-                        ForEach(Array(messages.enumerated()), id: \.offset) { _, m in
-                            Bubble(role: m.role == "user" ? .user : .ai, text: m.content)
-                                .id(m.content)
-                        }
-                        if !thinkText.isEmpty {
-                            ThinkingBox(text: thinkText, running: streaming)
-                        }
-                        if streaming && streamText.isEmpty {
-                            HStack(spacing: 6) {
-                                ProgressView().tint(Theme.accent)
-                                Text(thinkText.isEmpty ? "sto pensando…" : "scrivo la risposta…")
-                                    .font(Theme.ui(13)).foregroundColor(Theme.textDim)
-                            }
-                        } else if streaming && !streamText.isEmpty {
-                            Bubble(role: .ai, text: streamText)
-                        }
-                        if let e = error {
-                            Text(e).font(Theme.ui(12)).foregroundColor(Theme.danger)
-                        }
+            ScrollView {
+                VStack(spacing: 10) {
+                    if messages.isEmpty && !streaming {
+                        welcome
                     }
-                    .padding(Theme.pad)
+                    ForEach(Array(messages.enumerated()), id: \.offset) { _, m in
+                        Bubble(role: m.role == "user" ? .user : .ai, text: m.content)
+                    }
+                    if !thinkText.isEmpty {
+                        ThinkingBox(text: thinkText, running: streaming)
+                    }
+                    if streaming && streamText.isEmpty {
+                        HStack(spacing: 6) {
+                            ProgressView().tint(Theme.accent)
+                            Text(thinkText.isEmpty ? "sto pensando…" : "scrivo la risposta…")
+                                .font(Theme.ui(13)).foregroundColor(Theme.textDim)
+                        }
+                    } else if streaming && !streamText.isEmpty {
+                        Bubble(role: .ai, text: streamText)
+                    }
+                    if let e = error {
+                        Text(e).font(Theme.ui(12)).foregroundColor(Theme.danger)
+                    }
                 }
-                .onChange(of: streamText) { _ in
-                    withAnimation { proxy.scrollTo(bottomAnchor) }
-                }
+                .padding(Theme.pad)
             }
 
             inputBar
@@ -106,10 +100,12 @@ struct ChatView: View {
         streaming = true
         streamText = ""
         thinkText = ""
-        let history = messages
+        let history = messages.dropLast().suffix(8)
         Task {
             do {
-                let r = try await AIService.askCloud(q, context: context, history: history)
+                let r = try await AIService.askCloud(q, context: context, history: history.map {
+                    AIService.ChatMessage(role: $0.role, content: $0.content)
+                })
                 messages.append(AIService.ChatMessage(role: "assistant", content: r.text))
                 thinkText = r.reasoning
             } catch {
@@ -334,8 +330,8 @@ struct ArticleView: View {
         ScrollView {
             VStack(alignment: .leading, spacing: 14) {
                 if let ai = aiArticle {
-                    if let img = ai.images.first.flatMap(URL.init) {
-                        AsyncImage(url: img) { phase in
+                    if let urlString = ai.images.first, let url = URL(string: urlString) {
+                        AsyncImage(url: url) { phase in
                             if let i = phase.image { i.resizable().aspectRatio(contentMode: .fill) }
                         }
                         .frame(height: 200)
@@ -348,8 +344,10 @@ struct ArticleView: View {
                     ForEach(Array(ai.paragraphs.enumerated()), id: \.offset) { _, p in
                         Text(p).font(Theme.ui(16)).foregroundColor(Theme.text).lineSpacing(6)
                     }
-                    Link("Leggi l'originale su \(ai.source) →", destination: ai.sourceUrl.flatMap(URL.init) ?? URL(string: "https://example.com")!)
-                        .font(Theme.ui(13, .bold)).foregroundColor(Theme.accent)
+                    if let src = ai.sourceUrl.flatMap(URL.init) {
+                        Link("Leggi l'originale su \(ai.source) →", destination: src)
+                            .font(Theme.ui(13, .bold)).foregroundColor(Theme.accent)
+                    }
                 } else {
                     Text(item.source.uppercased())
                         .font(.system(size: 10, weight: .heavy)).kerning(0.8)
@@ -359,8 +357,10 @@ struct ArticleView: View {
                         Text(item.summary).font(Theme.ui(16)).foregroundColor(Theme.textDim).lineSpacing(5)
                     }
                     ProgressView("Carico l'articolo…").tint(Theme.accent).padding(.top, 20)
-                    Link("Apri l'articolo originale →", destination: URL(string: item.link) ?? URL(string: "https://example.com")!)
-                        .font(Theme.ui(13, .bold)).foregroundColor(Theme.accent)
+                    if let link = URL(string: item.link) {
+                        Link("Apri l'articolo originale →", destination: link)
+                            .font(Theme.ui(13, .bold)).foregroundColor(Theme.accent)
+                    }
                 }
             }
             .padding(Theme.pad)
@@ -369,11 +369,7 @@ struct ArticleView: View {
         .navigationTitle(item.source)
         .navigationBarTitleDisplayMode(.inline)
         .task {
-            aiArticle = app_ai(item)
+            aiArticle = Store.loadAiArticles()[item.id]
         }
-    }
-
-    private func app_ai(_ item: NewsItem) -> AiArticle? {
-        nil // riempito da ensureAiArticles via cache
     }
 }
