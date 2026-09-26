@@ -94,14 +94,6 @@ struct TodayView: View {
                         .background(Theme.surfaceAlt.cornerRadius(15))
                         .overlay(Circle().stroke(Theme.border, lineWidth: 0.5))
                     }
-                    NavigationLink(value: DetailRoute.settings) {
-                        Text("⚙")
-                            .font(.system(size: 13))
-                            .foregroundColor(Theme.textDim)
-                            .frame(width: 30, height: 30)
-                            .background(Theme.surfaceAlt.cornerRadius(15))
-                            .overlay(Circle().stroke(Theme.border, lineWidth: 0.5))
-                    }
                 })
 
             HStack(spacing: 8) {

@@ -46,10 +46,10 @@ struct MainTabs: View {
         TabView {
             TodayView()
                 .tabItem { Label("Oggi", systemImage: "newspaper") }
-            AIModelsView()
-                .tabItem { Label("Modelli", systemImage: "arrow.down.circle") }
             AITabView()
                 .tabItem { Label("AI", systemImage: "sparkles") }
+            SettingsTabView()
+                .tabItem { Label("Impostazioni", systemImage: "gearshape") }
         }
         .tint(Theme.accent)
     }

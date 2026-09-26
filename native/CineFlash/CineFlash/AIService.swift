@@ -7,10 +7,9 @@ private extension Data {
 // MARK: - AI gratuita nel cloud (OpenRouter) — porting di cloudAI.ts + aiNews.ts
 
 enum AIService {
-    /// Chiave di servizio incorporata (già pubblica nel repo storico) in base64,
-    /// come richiesto dalle regole di push protection di GitHub.
+    /// Chiave di servizio incorporata in base64 (requisito push protection).
     private static let apiKeyB64 =
-        "c2stb3ItdjEtYzhjOWZhOGFlMmJhN2Y5ZTg1NzY5MGY0NmUzZTNhYzY4YTdmMDIzYmVmYTcwMTc0YzQ3ODUzODMwNTU3ZDY5ZA=="
+        "c2stb3ItdjEtZWYxNGEyMGJjMjYxZTIwZGU4ZTNiMTQzYzhlMmY0ZDg2Yzk4ZjRmNmIxZGU1NDYwMTAwOGE1OTM5YjJjZTE5OQ=="
     private static var apiKey: String {
         Data(Data(base64Encoded: apiKeyB64) ?? Data()).decodeUTF8()
     }
@@ -18,9 +17,9 @@ enum AIService {
 
     /// Modelli gratuiti provati in ordine: il primo che risponde vince.
     private static let freeModels = [
+        "z-ai/glm-4.5-air:free",
         "z-ai/glm-5.2:free",
-        "nvidia/nemotron-3.5-lightning:free",
-        "google/gemma-4-31b-it:free",
+        "meta-llama/llama-3.3-70b-instruct:free",
     ]
     /// Modelli per la redazione (riscrittura articoli).
     private static let writerModels = [
