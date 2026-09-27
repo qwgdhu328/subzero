@@ -10,6 +10,9 @@ namespace fly {
 //  Parametri di gioco (tweak qui)
 // ---------------------------------------------------------------------- //
 static constexpr float kMachOne      = 343.0f;  // m/s: soglia boom sonico
+static constexpr float kRho0         = 1.225f;  // kg/m^3 densità al livello del mare (§2 doc)
+static constexpr float kScaleHeight  = 8500.0f; // scala di quota atmosferica
+static constexpr float kBodyArea     = 0.85f;   // profilo frontale m^2
 static constexpr float kBaseSpeed    = 42.0f;   // m/s
 static constexpr float kBoostSpeed   = 833.0f;  // m/s ≈ 3000 km/h in boost
 static constexpr float kAccel        = 210.0f;  // m/s^2: spinta da supereroe fino a max speed
@@ -297,9 +300,21 @@ void GameStateData::updateFlying(double dt) {
                * Quat::fromAxisAngle({1, 0, 0}, pitch)
                * Quat::fromAxisAngle({0, 0, 1}, roll);
 
-    // Velocità + boost (spinta da supereroe fino a ~3000 km/h).
+    // Velocità + boost con drag atmosferico reale (§2 del doc):
+    // Cd(M) subsonico 0.3, spike transonico fino a 0.8, decadimento ipersonico 0.8/sqrt(M^2-1);
+    // densità esponenziale rho(h) — salendo in alto il boost porta oltre Mach 1.
     float target = inputBoost && boostFuel > 0 ? kBoostSpeed : kBaseSpeed;
-    speed += clampf(target - speed, -kAccel * dts, kAccel * dts);
+    const float mach = speed / kMachOne;
+    float cd;
+    if (mach < 0.8f) cd = 0.3f;
+    else if (mach <= 1.2f) cd = 0.3f + 0.5f * (mach - 0.8f) / 0.4f;
+    else cd = 0.8f / std::sqrt(std::max(0.2f, mach * mach - 1.0f));
+    const float rho = kRho0 * std::exp(-std::max(0.0f, playerPos.y) / kScaleHeight);
+    const float dragAccel = 0.5f * rho * speed * speed * cd * kBodyArea / 90.0f;   // /massa ~90 kg
+    const float effectiveAccel = kAccel;
+    speed += clampf(target - speed, -effectiveAccel * dts, (effectiveAccel * 0.35f) * dts);
+    speed = std::max(kBaseSpeed * 0.5f, speed - dragAccel * dts);   // il drag frena sempre
+    if (speed > target) speed = std::max(target, speed - (effectiveAccel * 0.5f) * dts);
     if (inputBoost && boostFuel > 0) {
         boostFuel = std::max(0.0f, boostFuel - dts * 0.18f);
         if (frames % 2 == 0)

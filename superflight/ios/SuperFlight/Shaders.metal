@@ -199,9 +199,10 @@ fragment float4 fragmentMain(VertexOut in [[stage_in]],
     float skyRefl = pow(1.0 - abs(n.y), 3.0) * 0.12;
     col += float3(0.45, 0.6, 0.9) * skyRefl;
 
-    // Nebbia atmosferica.
+    // Nebbia atmosferica: scompare salendo di quota (Modulo 10: aria più rarefatta).
     float dist = length(u.cameraPos - in.world);
-    float fog = 1.0 - exp(-dist * 0.0011);
+    float altitudeT = saturate((u.cameraPos.y - 400.0) / 2200.0);
+    float fog = (1.0 - exp(-dist * 0.0011)) * (1.0 - 0.75 * altitudeT);
     float3 fogCol = float3(0.62, 0.74, 0.92);
     col = mix(col, fogCol, clamp(fog, 0.0, 0.85));
     return float4(col, 1.0);

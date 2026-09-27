@@ -30,6 +30,17 @@
 
 ## Stato del progetto (aggiornato al 27/09/2026)
 
+> **Mappa dal documento di design "Project Krypton" (v4.0)** — cosa è già nel motore:
+> - **Modulo 2** (drag atmosferico Cd(Mach) + rho esponenziale): ✅ implementato nel volo
+> - **Modulo 3** (FOV quadratico in Mach, kick boom): ✅ implementato; aberrazione cromatica in coda
+> - **Modulo 9** (streaming predittivo): ✅ versione semplificata (spawn chunk lungo traiettoria)
+> - **Modulo 10** (atmosfera): ✅ semplificato (cielo scurisce con la quota, fog svanisce)
+> - **Modulo 13** (folla): ✅ versione ridotta (40 NPC con fuga dal laser)
+> - **Modulo 17** (Doppler): da fare con il task Audio
+> - **Moduli 4/5/7/8/11/12** (Voronoi, GPU PBD, SPH, X-Ray, SVO, Utility AI): fuori scope per
+>   engine custom Metal/iOS; adattamenti semplificati già in Piano (droni, soffio toy)
+> - **Modulo 14/15** (pipeline AI 3D locale): richiede GPU NVIDIA; see Piano §asset esterni
+
 - **Motore C++** (`superflight/native/engine`): volo, camminata/salto/corsa, laser oculari con
   calore e raycast, 40 NPC pedoni che scappano dal raggio, anelli, crash/respawn,
   camera smorzata con reset reale. Test nativi OK (menu/salto/volo/atterraggio + NPC in fuga).

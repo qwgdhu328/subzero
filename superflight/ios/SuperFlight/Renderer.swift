@@ -134,15 +134,21 @@ final class Renderer: NSObject, MTKViewDelegate {
         let aspect = Float(view.drawableSize.width / max(1.0, view.drawableSize.height))
         uniforms = makeUniforms(aspect: aspect)
 
-        // Cielo in base alla qualità: Alta = tramonto caldo, Media = pomeriggio, Lite = piatto
+        // Cielo in base alla qualità e alla quota (Modulo 10 semplificato):
+        // sopra ~2600 m il cielo scurisce verso il blu spazio; il fog negli shader resta basso.
+        let alt = fly_altitude()
+        let spaceT = min(1.0, max(0.0, (alt - 400.0) / 2200.0))
+        var skyR = 0.36, skyG = 0.52, skyB = 0.88
         switch GameSettings.shared.quality {
-        case .alta:
-            rpd.colorAttachments[0].clearColor = MTLClearColor(red: 0.36, green: 0.52, blue: 0.88, alpha: 1)
-        case .media:
-            rpd.colorAttachments[0].clearColor = MTLClearColor(red: 0.42, green: 0.60, blue: 0.90, alpha: 1)
-        case .lite:
-            rpd.colorAttachments[0].clearColor = MTLClearColor(red: 0.55, green: 0.68, blue: 0.92, alpha: 1)
+        case .media: skyR = 0.42; skyG = 0.60; skyB = 0.90
+        case .lite:  skyR = 0.55; skyG = 0.68; skyB = 0.92
+        case .alta:  break
         }
+        // verso lo spazio: scurisce e vira al blu profondo
+        let r = skyR * (1 - spaceT * 0.85)
+        let g = skyG * (1 - spaceT * 0.72)
+        let b = skyB * (1 - spaceT * 0.45) + 0.03 * spaceT
+        rpd.colorAttachments[0].clearColor = MTLClearColor(red: Double(r), green: Double(g), blue: Double(b), alpha: 1)
 
         enc.setVertexBuffer(uniformBuffer(), offset: 0, index: 1)
         enc.setCullMode(.none)
@@ -190,10 +196,11 @@ final class Renderer: NSObject, MTKViewDelegate {
             let t = Float(fly_time()) * 60.0
             camPos += SIMD3<Float>(sin(t*1.1), cos(t*1.7), sin(t*1.3)) * sh * 0.8
         }
-        // FOV dinamico (§2.3): da 70° a ~102° con la velocità; kick extra al boom sonico.
+        // FOV dinamico quadratico in Mach (Modulo 3 del doc):
+        // FOV = base + alpha * min((v/v_mach1)^2, beta) — da 70° a ~103°.
         let v = fly_speed()
-        let speedT = min(1.0, v / 833.0)
-        var fov = 1.22 + speedT * 0.55                       // 70° → ~102°
+        let machT = min(2.44, pow(v / 343.0, 2.0))           // beta = 2.44 (≈ Mach 1.56 saturo)
+        var fov = 1.22 + 0.55 * machT / 2.44
         fov += fly_sonic_ripple() * 0.25                     // kick all'onda d'urto
         let proj = MathUtil.perspective(fovY: fov, aspect: aspect, zNear: 0.5, zFar: 2200)
         let view = MathUtil.lookFrom(eye: camPos, quat: SIMD4<Float>(cq.x, cq.y, cq.z, w2))
