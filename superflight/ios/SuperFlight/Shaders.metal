@@ -54,13 +54,13 @@ static inline float3 boxScale(float4x4 m) {
 
 // Hash senza artefatti di banda.
 static inline float hash12(float2 p) {
-    float3 p3 = fract(float3(p.xyx) * 0.1031);
-    p3 += dot(p3, p3.yzx + 33.33);
+    float3 p3 = fract(float3(p.x, p.y, p.x) * 0.1031);
+    p3 += dot(p3, float3(p3.y, p3.z, p3.x) + 33.33);
     return fract((p3.x + p3.y) * p3.z);
 }
-static inline float hash13(float3 p3) {
-    p3 = fract(p3 * 0.1031);
-    p3 += dot(p3, p3.zyx + 31.32);
+static inline float hash13(float3 p) {
+    float3 p3 = fract(p * 0.1031);
+    p3 += dot(p3, float3(p3.z, p3.y, p3.x) + 31.32);
     return fract((p3.x + p3.y) * p3.z);
 }
 // Value noise 2D per variazioni morbide (asfalto, nuvole).
