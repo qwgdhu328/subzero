@@ -12,7 +12,7 @@ namespace fly {
 constexpr int MAX_BUILDINGS = 380;
 constexpr int MAX_RINGS = 40;
 constexpr int MAX_LASER_SEGS = 48;   // scie residue dei raggi oculari
-constexpr int MAX_NPCS = 40;         // pedoni simulati (limite da impostazioni)
+constexpr int MAX_NPCS = 60;         // pedoni simulati (limite da impostazioni; 60 = Ultra 4K)
 constexpr int MAX_DEBRIS = 120;      // detriti fisici simultanei
 constexpr int MAX_PARTICLES = 900;   // limite particelle da impostazioni (900 = Ultra 4K)
 constexpr int CITY_GRID = 8;          // 8x8 blocchi città

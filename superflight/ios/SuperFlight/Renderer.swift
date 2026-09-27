@@ -5,18 +5,18 @@
 import MetalKit
 import simd
 
+// Layout identico al FlyUniforms di Shaders.metal: solo float4x4 e float4
+// (float3 ha allineamento 16 in Metal e divergerebbe da SIMD3 in Swift).
 struct FlyUniforms {
     var viewProj: simd_float4x4
     var invViewProj: simd_float4x4
-    var cameraPos: SIMD3<Float>
-    var time: Float
-    var cameraFwd: SIMD3<Float>
-    var aspect: Float
-    var sunDir: SIMD3<Float>
-    var prepassScale: Float
-    var bufferSize: SIMD2<Float>
-    var pad1: SIMD2<Float> = .zero
-    var pad2: SIMD4<Float> = .zero
+    var cameraPosTime: SIMD4<Float>   // xyz = posizione camera, w = tempo
+    var fwdAspect: SIMD4<Float>       // xyz = direzione vista, w = aspect
+    var sunPre: SIMD4<Float>          // xyz = direzione sole, w = scala prepass
+    var bufferSizePad: SIMD4<Float>   // xy = dimensioni buffer
+
+    var time: Float { cameraPosTime.w }
+    var cameraPos: SIMD3<Float> { cameraPosTime.xyz }
 }
 
 struct InstanceData {
@@ -71,9 +71,10 @@ final class Renderer: NSObject, MTKViewDelegate {
 
     private var uniforms = FlyUniforms(
         viewProj: matrix_identity_float4x4, invViewProj: matrix_identity_float4x4,
-        cameraPos: .zero, time: 0, cameraFwd: SIMD3(0, 0, -1), aspect: 1,
-        sunDir: SIMD3(0.45, 0.55, 0.35), prepassScale: 1,
-        bufferSize: SIMD2(1, 1))
+        cameraPosTime: SIMD4(0, 0, 0, 0),
+        fwdAspect: SIMD4(0, 0, -1, 1),
+        sunPre: SIMD4(0.45, 0.55, 0.35, 1),
+        bufferSizePad: SIMD4(1, 1, 0, 0))
 
     init(metalKitView: MTKView) {
         device = metalKitView.device!
@@ -248,6 +249,7 @@ final class Renderer: NSObject, MTKViewDelegate {
         guard let enc = cmd.makeRenderCommandEncoder(descriptor: rpd) else { return }
 
         enc.setVertexBuffer(uniformBuffer(), offset: 0, index: 1)
+        enc.setFragmentBuffer(uniformBuffer(), offset: 0, index: 1)   // nebbia/luce solare nei fragment
         enc.setCullMode(.none)
 
         // Cielo procedurale: quad full-screen a depth always, sotto ogni cosa.
@@ -305,7 +307,11 @@ final class Renderer: NSObject, MTKViewDelegate {
             }
 
             // Composite: scena risolta + bloom → tonemap ACES → drawable finale.
+            // Il pipeline composite non ha attachment di depth: rimuovilo dal
+            // render pass del drawable, altrimenti la validazione Metal fallisce.
             guard let rpd = view.currentRenderPassDescriptor else { return }
+            rpd.depthAttachment.texture = nil
+            rpd.depthAttachment.loadAction = .dontCare
             if let enc = cmd.makeRenderCommandEncoder(descriptor: rpd) {
                 enc.setRenderPipelineState(pipelineComposite)
                 enc.setFragmentTexture(sceneResolveTex ?? sceneTex, index: 0)
@@ -352,15 +358,14 @@ final class Renderer: NSObject, MTKViewDelegate {
     }
 
     private func ensureTargets(width: Int, height: Int) {
-        let ultra = GameSettings.shared.quality == .ultra
-        let wantScale: Float = ultra ? Float(GameSettings.shared.quality.renderScale) : 1
+        // Chiamato solo nel ramo Ultra: target HDR + MSAA 4x alla scala richiesta.
+        let wantScale: Float = Float(GameSettings.shared.quality.renderScale)
         let w = max(1, Int(Float(width) * wantScale))
         let h = max(1, Int(Float(height) * wantScale))
         if sceneTex != nil && w == texW && h == texH { return }
 
-        let ultraNow = ultra
-        let fmt: MTLPixelFormat = ultraNow ? .rgba16Float : viewFormat
-        let sampleCount = ultraNow ? 4 : 1
+        let fmt: MTLPixelFormat = .rgba16Float
+        let sampleCount = 4
         let d = MTLTextureDescriptor.texture2DDescriptor(pixelFormat: fmt, width: w, height: h, mipmapped: false)
         d.usage = [.renderTarget, .shaderRead]
         d.textureType = sampleCount > 1 ? .type2DMultisample : .type2D
@@ -377,9 +382,9 @@ final class Renderer: NSObject, MTKViewDelegate {
             sceneResolveTex = nil
         }
 
-        // Depth MSAA (formato combinato con stencil per Ultra).
+        // Depth MSAA (stessa tessitura del colore).
         let dd = MTLTextureDescriptor.texture2DDescriptor(
-            pixelFormat: ultraNow ? .depth32Float : .depth32Float,
+            pixelFormat: .depth32Float,
             width: w, height: h, mipmapped: false)
         dd.usage = .renderTarget
         dd.textureType = sampleCount > 1 ? .type2DMultisample : .type2D
@@ -396,8 +401,6 @@ final class Renderer: NSObject, MTKViewDelegate {
         texW = w; texH = h
         prepassScale = wantScale
     }
-
-    private var viewFormat: MTLPixelFormat = .bgra8Unorm
 
     private func drawFullscreen(enc: MTLRenderCommandEncoder, pipeline: MTLRenderPipelineState) {
         enc.setRenderPipelineState(pipeline)
@@ -440,17 +443,15 @@ final class Renderer: NSObject, MTKViewDelegate {
         let proj = MathUtil.perspective(fovY: fov, aspect: aspect, zNear: 0.5, zFar: 2200)
         let view = MathUtil.lookFrom(eye: camPos, quat: SIMD4<Float>(cq.x, cq.y, cq.z, w2))
         let viewProj = proj * view
-        let u = FlyUniforms(
+        let sun = MathUtil.sunDirection(time: Float(fly_time()))
+        let fwd = MathUtil.camForward(quat: SIMD4<Float>(cq.x, cq.y, cq.z, w2))
+        return FlyUniforms(
             viewProj: viewProj,
             invViewProj: viewProj.inverse,
-            cameraPos: camPos,
-            time: Float(fly_time()),
-            cameraFwd: MathUtil.camForward(quat: SIMD4<Float>(cq.x, cq.y, cq.z, w2)),
-            aspect: aspect,
-            sunDir: MathUtil.sunDirection(time: Float(fly_time())),
-            prepassScale: prepassScale,
-            bufferSize: SIMD2<Float>(width, height))
-        return u
+            cameraPosTime: SIMD4(camPos.x, camPos.y, camPos.z, Float(fly_time())),
+            fwdAspect: SIMD4(fwd.x, fwd.y, fwd.z, aspect),
+            sunPre: SIMD4(sun.x, sun.y, sun.z, prepassScale),
+            bufferSizePad: SIMD4(width, height, 0, 0))
     }
 
     private func ensure(_ buf: inout MTLBuffer?, capacity: inout Int, needed: Int) -> MTLBuffer {

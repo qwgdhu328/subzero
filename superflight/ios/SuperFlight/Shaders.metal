@@ -5,18 +5,15 @@
 #include <metal_stdlib>
 using namespace metal;
 
+// Layout identico su Swift e Metal: solo float4x4 e float4 (niente float3,
+// il cui allineamento 16 in Metal diverge dallo stride 16 di SIMD3 in Swift).
 struct FlyUniforms {
-    float4x4 viewProj;        // righe 0-3
-    float4x4 invViewProj;     // righe 4-7
-    float3   cameraPos;       // riga 8
-    float    time;
-    float3   cameraFwd;       // riga 9
-    float    aspect;
-    float3   sunDir;          // riga 10
-    float    prepassScale;    // risoluzione pass offscreen / drawable (0.5/0.75/1)
-    float2   bufferSize;      // riga 11
-    float2   pad1;
-    float4   pad2;            // riga 12
+    float4x4 viewProj;        // 0
+    float4x4 invViewProj;     // 64
+    float4   cameraPosTime;   // 128: xyz = posizione camera, w = tempo
+    float4   fwdAspect;       // 144: xyz = direzione vista, w = aspect
+    float4   sunPre;          // 160: xyz = direzione sole, w = scala prepass
+    float4   bufferSizePad;   // 176: xy = dimensioni buffer
 };
 
 struct InstanceData {
@@ -32,6 +29,12 @@ struct VertexOut {
     float3 local;
     float3 scale;   // dimensione mondo del box (cubi)
     float2 uv;      // coordinate tessuto (mantello) / ndc (cielo)
+};
+
+// Output dei vertex/fragment full-screen (cielo, post-process).
+struct PostOut {
+    float4 pos [[position]];
+    float2 uv;
 };
 
 // Cubo unitario centrato: 36 vertici (posizione, normale)
@@ -145,7 +148,7 @@ fragment float4 fragmentMain(VertexOut in [[stage_in]],
 {
     float3 n = normalize(in.normal);
     float3 s = max(in.scale, float3(0.001));
-    float3 sunDir = normalize(u.sunDir);
+    float3 sunDir = normalize(u.sunPre.xyz);
     float sunVis = smoothstep(-0.05, 0.12, sunDir.y);
     float dusk = 1.0 - smoothstep(0.05, 0.45, sunDir.y);
 
@@ -244,8 +247,8 @@ fragment float4 fragmentMain(VertexOut in [[stage_in]],
     col += float3(0.45, 0.6, 0.9) * skyRefl;
 
     // Nebbia atmosferica: scompare salendo di quota (Modulo 10: aria più rarefatta).
-    float dist = length(u.cameraPos - in.world);
-    float altitudeT = saturate((u.cameraPos.y - 400.0) / 2200.0);
+    float dist = length(u.cameraPosTime.xyz - in.world);
+    float altitudeT = saturate((u.cameraPosTime.y - 400.0) / 2200.0);
     float fog = (1.0 - exp(-dist * 0.0011)) * (1.0 - 0.75 * altitudeT);
     float3 fogCol = mix(float3(0.62, 0.74, 0.92), float3(0.85, 0.62, 0.48), dusk * 0.6);
     col = mix(col, fogCol, clamp(fog, 0.0, 0.85));
@@ -303,8 +306,8 @@ fragment float4 fabricFragment(VertexOut in [[stage_in]],
                                constant FlyUniforms &u [[buffer(1)]])
 {
     float3 n = normalize(in.normal);
-    float3 V = normalize(u.cameraPos - in.world);
-    float3 L = normalize(u.sunDir);
+    float3 V = normalize(u.cameraPosTime.xyz - in.world);
+    float3 L = normalize(u.sunPre.xyz);
     float sunVis = smoothstep(-0.05, 0.12, L.y);
 
     float diff = max(0.0, dot(n, L));
@@ -327,7 +330,7 @@ fragment float4 fabricFragment(VertexOut in [[stage_in]],
         col = in.color.rgb * 2.2;
     }
 
-    float dist = length(u.cameraPos - in.world);
+    float dist = length(u.cameraPosTime.xyz - in.world);
     float fog = 1.0 - exp(-dist * 0.0011);
     col = mix(col, float3(0.62, 0.74, 0.92), clamp(fog, 0.0, 0.85) * 0.7);
     return float4(col, 1.0);
@@ -338,12 +341,12 @@ fragment float4 cloudFragment(VertexOut in [[stage_in]],
                               constant FlyUniforms &u [[buffer(1)]])
 {
     float3 n = normalize(in.normal);
-    float diff = 0.7 + 0.3 * max(0.0, dot(n, normalize(u.sunDir)));
+    float diff = 0.7 + 0.3 * max(0.0, dot(n, normalize(u.sunPre.xyz)));
     float3 col = float3(1.0, 1.0, 1.02) * diff;
     // Bordo morbido del blocco: le facce laterali sfumano verso trasparente.
     float edge = 1.0 - max(abs(in.local.x), abs(in.local.z));
     float edgeFade = smoothstep(0.0, 0.45, edge);
-    float dist = length(u.cameraPos - in.world);
+    float dist = length(u.cameraPosTime.xyz - in.world);
     float fog = 1.0 - exp(-dist * 0.0012);
     col = mix(col, float3(0.62, 0.74, 0.92), clamp(fog, 0.0, 1.0) * 0.9);
     return float4(col, 0.62 * edgeFade);
@@ -356,7 +359,7 @@ fragment float4 glowFragment(VertexOut in [[stage_in]],
     float edge = 1.0 - abs(in.local.y);
     float a = in.color.a * (0.35 + 0.65 * edge);
     float3 col = in.color.rgb * (1.5 + edge);
-    float dist = length(u.cameraPos - in.world);
+    float dist = length(u.cameraPosTime.xyz - in.world);
     float fog = 1.0 - exp(-dist * 0.0011);
     col = mix(col, float3(0.62, 0.74, 0.92), clamp(fog, 0.0, 0.85) * (1.0 - a));
     return float4(col * a, a);
@@ -368,21 +371,16 @@ fragment float4 skyFragment(PostOut in [[stage_in]],
                             constant FlyUniforms &u [[buffer(1)]])
 {
     float4 farP = u.invViewProj * float4(in.uv * 2.0 - 1.0, 1.0, 1.0);
-    float3 dir = normalize(farP.xyz / farP.w - u.cameraPos);
-    float altT = saturate((u.cameraPos.y - 400.0) / 2200.0);
-    float3 col = skyColor(dir, normalize(u.sunDir), altT, u.time);
+    float3 dir = normalize(farP.xyz / farP.w - u.cameraPosTime.xyz);
+    float altT = saturate((u.cameraPosTime.y - 400.0) / 2200.0);
+    float3 col = skyColor(dir, normalize(u.sunPre.xyz), altT, u.cameraPosTime.w);
     return float4(col, 1.0);
 }
 
 // ------------------------------------------------------------ //
 //  Post-process: bright pass → blur separabile → composite (tonemap ACES)
 
-struct PostOut {
-    float4 pos [[position]];
-    float2 uv;
-};
-
-// Triangolo full-screen: 6 vertici senza buffer (posizioni generate da vid).
+// Quad full-screen: 6 vertici senza buffer (posizioni generate da vid).
 vertex PostOut postVertex(uint vid [[vertex_id]])
 {
     float2 p = float2(float(vid & 1), float(vid >> 1));   // (0,0)(1,0)(0,1)(1,0)(0,1)(1,1)
@@ -434,6 +432,6 @@ fragment float4 compositeFrag(PostOut in [[stage_in]],
     // Vignetta leggera + grana filmica sottilissima (maschera il banding).
     float2 q = in.uv - 0.5;
     float vig = 1.0 - dot(q, q) * 0.55;
-    float grain = (hash12(in.uv * u.bufferSize + fract(u.time) * 61.7) - 0.5) * 0.012;
+    float grain = (hash12(in.uv * u.bufferSizePad.xy + fract(u.cameraPosTime.w) * 61.7) - 0.5) * 0.012;
     return float4(clamp(x * vig + grain, 0.0, 1.0), 1.0);
 }
