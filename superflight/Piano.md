@@ -47,17 +47,20 @@
 
 ## Prossimi task (in ordine, con stima)
 
-1. **[30 min] Blindatura anti-crash**: rassegna tutti gli accessi ad array/buffer nel renderer
-   (drawNpcs, drawParticles, beamMatrix, cape grid) e assicura bounds coerenti; controlla che
-   ogni `ensure()` sia seguito da bind del buffer restituito.
-2. **[45 min] Audio minimal**: effetti senza asset esterni via AVAudioEngine — laser (tono
-   rovesciato), esplosioni (rumore filtrato), passi, vento in volo. Toggle audio nell'HUD.
-3. **[40 min] Esplosioni migliori**: quando un edificio collassa, detriti (particelle con
+1. **[45 min] Audio minimal**: effetti senza asset esterni via AVAudioEngine — laser (tono
+   rovesciato), esplosioni (rumore filtrato), passi, vento in volo. Toggle audio nell'HUD
+   (aggiungere anche una riga nel pannello IMPOSTAZIONI già esistente).
+2. **[40 min] Esplosioni migliori**: quando un edificio collassa, detriti (particelle con
    gravità e rimbalzo sul terreno) + colonna di fumo + onda d'urto della camera.
-4. **[60 min] Droni nemici**: volano nella città, sparano proiettili lenti, distruttibili con
+3. **[60 min] Droni nemici**: volano nella città, sparano proiettili lenti, distruttibili con
    un colpo di laser (+50 punti); punteggio salvato nel best.
-5. **[30 min] Minimappa HUD**: posizione Superman, NPC, anelli e edifici danneggiati.
-6. **[20 min] README**: istruzioni installazione IPA (Sideloadly/AltStore) e comandi CI.
+4. **[30 min] Minimappa HUD**: posizione Superman, NPC, anelli e edifici danneggiati.
+5. **[20 min] README**: istruzioni installazione IPA (Sideloadly/AltStore) e comandi CI.
+
+> Nota settings (fatto, commit 73b08ca): il pannello IMPOSTAZIONI è raggiungibile col
+> pulsante ⚙ nel menu. Qualità Alta/Media/Lite cambia limiti NPC/particelle (via
+> `fly_set_limits`), nuvole e cielo. Se si aggiungono nuove opzioni grafiche, inserirle
+> in quel pannello e in `GameSettings.swift`.
 
 ---
 
@@ -68,3 +71,6 @@
 - [x] Superman mesh 3D articolata + mantello animato + NPC che scappano dai laser
 - [x] Strade 3D, nuvole, finestre realistiche
 - [x] Fix crash mantello (2a02c1c)
+- [x] Blindatura anti-crash: bound renderer + drawParticles buffer coerente (73b08ca)
+- [x] IMPOSTAZIONI: qualità grafica Alta/Media/Lite, sensibilità joystick, 60/120 FPS,
+      persistite in UserDefaults e applicabili al volo (73b08ca, run CI 36288970870 verde)
