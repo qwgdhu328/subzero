@@ -38,6 +38,22 @@ final class GameViewController: UIViewController {
     override var supportedInterfaceOrientations: UIInterfaceOrientationMask { .landscape }
     override var prefersHomeIndicatorAutoHidden: Bool { true }
 
+    override func viewWillLayoutSubviews() {
+        super.viewWillLayoutSubviews()
+        applyRenderScale()
+    }
+
+    /// Allinea la risoluzione del drawable alla scala di rendering della qualità.
+    private func applyRenderScale() {
+        let s = GameSettings.shared.quality.renderScale
+        let w = view.bounds.width * s * view.contentScaleFactor
+        let h = view.bounds.height * s * view.contentScaleFactor
+        if w >= 1, h >= 1, gameView != nil,
+           abs(gameView.drawableSize.width - w) > 0.5 || abs(gameView.drawableSize.height - h) > 0.5 {
+            gameView.drawableSize = CGSize(width: w, height: h)
+        }
+    }
+
     override func viewDidLoad() {
         super.viewDidLoad()
 
@@ -55,6 +71,7 @@ final class GameViewController: UIViewController {
         gameView.touchDelegate = touch
         touch.attach(to: gameView)      // senza questo il joystick non invia input
         view.addSubview(gameView)
+        applyRenderScale()              // Ultra 4K: drawable alla scala nativa da subito
 
         renderer = Renderer(metalKitView: gameView)
         gameView.delegate = renderer
@@ -89,5 +106,7 @@ final class GameViewController: UIViewController {
         s.applyLimits()                                  // NPC/particelle al motore
         touch.sensitivity = s.sensitivity                // joystick
         gameView.preferredFramesPerSecond = s.fps60 ? 60 : 120
+        applyRenderScale()                               // risoluzione in base alla qualità
+        renderer?.applyQuality()                         // ricrea i target HDR/MSAA se serve
     }
 }

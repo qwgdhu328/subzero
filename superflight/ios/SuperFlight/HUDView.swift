@@ -36,7 +36,7 @@ final class HUDView: UIView {
     private let settingsPanel = UIView()
     private let settingsTitle = UILabel()
     private let qualityLabel = UILabel()
-    private let qualitySegmented = UISegmentedControl(items: ["Alta", "Media", "Lite"])
+    private let qualitySegmented = UISegmentedControl(items: ["Alta", "Media", "Lite", "Ultra 4K"])
     private let sensLabel = UILabel()
     private let sensSegmented = UISegmentedControl(items: ["Bassa", "Normale", "Alta"])
     private let fpsLabel = UILabel()

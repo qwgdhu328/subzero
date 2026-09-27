@@ -1,0 +1,89 @@
+name: iOS Build (SuperFlight)
+
+on:
+  push:
+    branches: [main, master]
+    paths: ["superflight/**"]
+  pull_request:
+    paths: ["superflight/**"]
+  workflow_dispatch:
+
+jobs:
+  engine-test:
+    name: Motore C++ (test prestazioni)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Compila e testa il motore
+        working-directory: superflight/native
+        run: |
+          g++ -std=c++17 -O2 -Wall -Wextra -o test_engine test/main.cpp engine/game.cpp engine/game_api.cpp
+          ./test_engine
+
+  ios-build:
+    name: App iOS (Xcode + Metal)
+    runs-on: macos-15
+    steps:
+      - uses: actions/checkout@v4
+      - name: Seleziona Xcode latest stable (formato progetto 77 richiede Xcode 16+)
+        uses: maxim-lobanov/setup-xcode@v1
+        with:
+          xcode-version: latest-stable
+      - name: Installa XcodeGen
+        run: brew install xcodegen
+      - name: Genera progetto Xcode
+        working-directory: superflight
+        run: xcodegen generate
+      - name: Build (simulatore iOS)
+        working-directory: superflight
+        run: |
+          set +e
+          xcodebuild -project SuperFlight.xcodeproj -scheme SuperFlight \
+            -destination 'generic/platform=iOS Simulator' \
+            -configuration Debug build CODE_SIGNING_ALLOWED=NO > build.log 2>&1
+          status=$?
+          echo "=== ERRORI DI COMPILAZIONE ==="
+          grep -E "error:" build.log | head -30
+          echo "==============================="
+          grep -E "error:" build.log | head -20 | sed 's/^/::error::/'
+          tail -15 build.log
+          exit $status
+      - name: Build dispositivo (Release, non firmato)
+        working-directory: superflight
+        run: |
+          set -o pipefail
+          xcodebuild -project SuperFlight.xcodeproj -scheme SuperFlight \
+            -configuration Release \
+            -sdk iphoneos \
+            -derivedDataPath build \
+            CODE_SIGNING_ALLOWED=NO CODE_SIGN_IDENTITY="" \
+            2>&1 | tee device-build.log | xcbeautify --renderer github-actions || exit 1
+      - name: Crea IPA (non firmata)
+        working-directory: superflight
+        run: |
+          set -euo pipefail
+          mkdir -p ipa/Payload out
+          APP_PATH=$(find build/Build/Products/Release-iphoneos -name "*.app" -type d | head -n 1)
+          if [ -z "$APP_PATH" ]; then
+            echo "::error::Nessun .app trovato nei prodotti di build"
+            find build/Build/Products -maxdepth 3 -print
+            exit 1
+          fi
+          echo "Packaging: $APP_PATH"
+          cp -R "$APP_PATH" ipa/Payload/
+          ditto -c -k --sequesterRsrc --keepParent ipa/Payload out/SuperFlight-unsigned.ipa
+          echo "IPA creata: $(du -h out/SuperFlight-unsigned.ipa | cut -f1)"
+      - name: Salva log completo
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: build-log
+          path: superflight/build.log
+      - name: Upload IPA artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: superflight-ipa-unsigned
+          path: superflight/out/SuperFlight-unsigned.ipa
+          if-no-files-found: error
+      - name: Risultato
+        run: echo "Build iOS completata - IPA non firmata disponibile negli artifact"

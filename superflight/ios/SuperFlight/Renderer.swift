@@ -1,14 +1,22 @@
-// Renderer.swift — rendering 3D Metal: Superman con mesh articolate, mantello
-// animato, NPC pedoni, città con strade/nuvole/cielo, raggi oculari.
+// Renderer.swift — rendering 3D Metal 4K/HDR: Superman con mesh articolate,
+// mantello animato, NPC pedoni, città con strade/nuvole/cielo, raggi oculari,
+// cielo procedurale con sole e stelle, post-process bloom + tonemap ACES.
 
 import MetalKit
 import simd
 
 struct FlyUniforms {
     var viewProj: simd_float4x4
+    var invViewProj: simd_float4x4
     var cameraPos: SIMD3<Float>
     var time: Float
-    var pad: SIMD3<Float> = .zero
+    var cameraFwd: SIMD3<Float>
+    var aspect: Float
+    var sunDir: SIMD3<Float>
+    var prepassScale: Float
+    var bufferSize: SIMD2<Float>
+    var pad1: SIMD2<Float> = .zero
+    var pad2: SIMD4<Float> = .zero
 }
 
 struct InstanceData {
@@ -25,10 +33,26 @@ final class Renderer: NSObject, MTKViewDelegate {
     var pipelineCape: MTLRenderPipelineState!    // mantello animato
     var pipelineCloud: MTLRenderPipelineState!   // nuvole
     var pipelineGlow: MTLRenderPipelineState!    // anelli/laser/particelle
+    var pipelineSky: MTLRenderPipelineState!     // cielo procedurale (0 depth, write mask)
+    var pipelineBright: MTLRenderPipelineState!  // post: estrazione HDR
+    var pipelineBlurH: MTLRenderPipelineState!   // post: blur orizzontale
+    var pipelineBlurV: MTLRenderPipelineState!   // post: blur verticale
+    var pipelineComposite: MTLRenderPipelineState! // post: tonemap finale
     var depthState: MTLDepthStencilState!
     var noDepthState: MTLDepthStencilState!
+    var skyDepthState: MTLDepthStencilState!     // test always, scrittura disattivata
 
     var bestScore = 0
+
+    // Target offscreen HDR (scene MSAA + resolve + ping-pong bloom) e depth MSAA.
+    private var sceneTex: MTLTexture?
+    private var sceneResolveTex: MTLTexture?
+    private var bloomA: MTLTexture?
+    private var bloomB: MTLTexture?
+    private var depthTex: MTLTexture?
+    private var texW = 0
+    private var texH = 0
+    private var prepassScale: Float = 1
 
     // Buffer istanze
     private var solidInstances: MTLBuffer?
@@ -46,11 +70,15 @@ final class Renderer: NSObject, MTKViewDelegate {
     private var capeIndices: [UInt16] = []
 
     private var uniforms = FlyUniforms(
-        viewProj: matrix_identity_float4x4, cameraPos: .zero, time: 0)
+        viewProj: matrix_identity_float4x4, invViewProj: matrix_identity_float4x4,
+        cameraPos: .zero, time: 0, cameraFwd: SIMD3(0, 0, -1), aspect: 1,
+        sunDir: SIMD3(0.45, 0.55, 0.35), prepassScale: 1,
+        bufferSize: SIMD2(1, 1))
 
     init(metalKitView: MTKView) {
         device = metalKitView.device!
         commandQueue = device.makeCommandQueue()!
+        attachedView = metalKitView
         super.init()
         let lib = device.makeDefaultLibrary()
         buildPipelines(library: lib, view: metalKitView)
@@ -62,6 +90,22 @@ final class Renderer: NSObject, MTKViewDelegate {
             options: .storageModeShared)
         buildMeshes()
         buildClouds()
+    }
+
+    // Chiamato da GameViewController quando cambia la qualità nelle impostazioni.
+    func applyQuality() {
+        prepassScale = Float(GameSettings.shared.quality.renderScale)
+        texW = 0; texH = 0   // forza realloc dei target al prossimo frame
+        // Uscendo da Ultra libera i target offscreen (decine di MB di VRAM).
+        if GameSettings.shared.quality != .ultra {
+            sceneTex = nil; sceneResolveTex = nil
+            bloomA = nil; bloomB = nil; depthTex = nil
+        }
+        // Ultra ha formati diversi (HDR + MSAA 4x): le pipeline vanno ricostruite.
+        if let view = attachedView {
+            buildPipelines(library: device.makeDefaultLibrary(), view: view)
+        }
+        buildMeshes()
     }
 
     // ------------------------------------------------------------ //
@@ -78,14 +122,27 @@ final class Renderer: NSObject, MTKViewDelegate {
         let fsFab  = lib.makeFunction(name: "fabricFragment")!
         let fsCloud = lib.makeFunction(name: "cloudFragment")!
         let fsGlow = lib.makeFunction(name: "glowFragment")!
+        let fsSky  = lib.makeFunction(name: "skyFragment")!
+        let vsPost = lib.makeFunction(name: "postVertex")!
+        let fsBright = lib.makeFunction(name: "brightPassFrag")!
+        let fsBlur = lib.makeFunction(name: "blurFrag")!
+        let fsComp = lib.makeFunction(name: "compositeFrag")!
+
+        // Pixel format in base alla qualità: Ultra usa HDR (RGBA16Float) + MSAA 4x.
+        let ultra = GameSettings.shared.quality == .ultra
+        let colorFmt: MTLPixelFormat = ultra ? .rgba16Float : view.colorPixelFormat
+        let depthFmt: MTLPixelFormat = ultra ? .depth32Float : view.depthStencilPixelFormat
+        let sampleCount = ultra ? 4 : 1
 
         func makePipe(_ vs: MTLFunction, _ fs: MTLFunction,
-                      additive: Bool, depthFormat: MTLPixelFormat) -> MTLRenderPipelineState {
+                      additive: Bool, depthFormat: MTLPixelFormat,
+                      blend: Bool = true, writeMask: MTLColorWriteMask = [.red, .green, .blue, .alpha],
+                      colorFormat: MTLPixelFormat? = nil, samples: Int = 0) -> MTLRenderPipelineState {
             let d = MTLRenderPipelineDescriptor()
             d.vertexFunction = vs
             d.fragmentFunction = fs
-            d.colorAttachments[0].pixelFormat = view.colorPixelFormat
-            d.colorAttachments[0].isBlendingEnabled = true
+            d.colorAttachments[0].pixelFormat = colorFormat ?? colorFmt
+            d.colorAttachments[0].isBlendingEnabled = blend
             d.colorAttachments[0].rgbBlendOperation = .add
             d.colorAttachments[0].alphaBlendOperation = .add
             if additive {
@@ -97,16 +154,42 @@ final class Renderer: NSObject, MTKViewDelegate {
             }
             d.colorAttachments[0].sourceAlphaBlendFactor = .one
             d.colorAttachments[0].destinationAlphaBlendFactor = .oneMinusSourceAlpha
+            d.colorAttachments[0].writeMask = writeMask
             d.depthAttachmentPixelFormat = depthFormat
+            d.rasterSampleCount = samples > 0 ? samples : sampleCount
             return (try? device.makeRenderPipelineState(descriptor: d))!
         }
 
-        let df = view.depthStencilPixelFormat
-        pipelineCity = makePipe(vsCube, fsCity, additive: false, depthFormat: df)
-        pipelineMesh = makePipe(vsMesh, fsFab, additive: false, depthFormat: df)
-        pipelineCape = makePipe(vsCape, fsFab, additive: false, depthFormat: df)
-        pipelineCloud = makePipe(vsCube, fsCloud, additive: false, depthFormat: df)
-        pipelineGlow = makePipe(vsCube, fsGlow, additive: true, depthFormat: df)
+        pipelineCity = makePipe(vsCube, fsCity, additive: false, depthFormat: depthFmt)
+        pipelineMesh = makePipe(vsMesh, fsFab, additive: false, depthFormat: depthFmt)
+        pipelineCape = makePipe(vsCape, fsFab, additive: false, depthFormat: depthFmt)
+        pipelineCloud = makePipe(vsCube, fsCloud, additive: false, depthFormat: depthFmt)
+        pipelineGlow = makePipe(vsCube, fsGlow, additive: true, depthFormat: depthFmt)
+        // Cielo: depth always + write mask RGB (alpha resta 1.0 per i pass successivi).
+        let dsdSky = MTLDepthStencilDescriptor()
+        dsdSky.depthCompareFunction = .always
+        dsdSky.isDepthWriteEnabled = false
+        skyDepthState = device.makeDepthStencilState(descriptor: dsdSky)!
+        pipelineSky = makePipe(vsPost, fsSky, additive: false, depthFormat: depthFmt,
+                               blend: false, writeMask: [.red, .green, .blue])
+        // Post-process: niente depth, niente blend (sovrascrittura piena).
+        // Bright/blur scrivono sulle texture bloom HDR; il composite scrive sul
+        // drawable (LDR anche in Ultra). Nessuno usa MSAA.
+        let postDepth = MTLPixelFormat.invalid
+        let bloomFmt: MTLPixelFormat = ultra ? .rgba16Float : colorFmt
+        let drawableFmt: MTLPixelFormat = view.colorPixelFormat
+        pipelineBright = makePipe(vsPost, fsBright, additive: false,
+                                  depthFormat: postDepth, blend: false,
+                                  colorFormat: bloomFmt, samples: 1)
+        pipelineBlurH = makePipe(vsPost, fsBlur, additive: false,
+                                 depthFormat: postDepth, blend: false,
+                                 colorFormat: bloomFmt, samples: 1)
+        pipelineBlurV = makePipe(vsPost, fsBlur, additive: false,
+                                 depthFormat: postDepth, blend: false,
+                                 colorFormat: bloomFmt, samples: 1)
+        pipelineComposite = makePipe(vsPost, fsComp, additive: false,
+                                     depthFormat: postDepth, blend: false,
+                                     colorFormat: drawableFmt, samples: 1)
 
         let dsd = MTLDepthStencilDescriptor()
         dsd.depthCompareFunction = .less
@@ -127,20 +210,21 @@ final class Renderer: NSObject, MTKViewDelegate {
         bestScore = max(bestScore, Int(fly_best()))
 
         guard let drawable = view.currentDrawable,
-              let rpd = view.currentRenderPassDescriptor,
-              let cmd = commandQueue.makeCommandBuffer(),
-              let enc = cmd.makeRenderCommandEncoder(descriptor: rpd) else { return }
+              let cmd = commandQueue.makeCommandBuffer() else { return }
 
-        let aspect = Float(view.drawableSize.width / max(1.0, view.drawableSize.height))
-        uniforms = makeUniforms(aspect: aspect)
+        let dw = Int(view.drawableSize.width)
+        let dh = Int(view.drawableSize.height)
+        guard dw > 0, dh > 0 else { return }
 
-        // Cielo in base alla qualità e alla quota (Modulo 10 semplificato):
-        // sopra ~2600 m il cielo scurisce verso il blu spazio; il fog negli shader resta basso.
+        let aspect = Float(dw) / Float(max(1, dh))
+        uniforms = makeUniforms(aspect: aspect, width: Float(dw), height: Float(dh))
+
+        // Cielo in base alla qualità e alla quota: sopra ~2600 m vira al blu spazio.
         let alt = fly_altitude()
         let spaceT: Float = min(1.0, max(0.0, (alt - 400.0) / 2200.0))
         var skyR: Float = 0.36, skyG: Float = 0.52, skyB: Float = 0.88
         switch GameSettings.shared.quality {
-        case .media: skyR = 0.42; skyG = 0.60; skyB = 0.90
+        case .ultra, .media: skyR = 0.42; skyG = 0.60; skyB = 0.90
         case .lite:  skyR = 0.55; skyG = 0.68; skyB = 0.92
         case .alta:  break
         }
@@ -148,10 +232,31 @@ final class Renderer: NSObject, MTKViewDelegate {
         let r: Float = skyR * (1 - spaceT * 0.85)
         let g: Float = skyG * (1 - spaceT * 0.72)
         let b: Float = skyB * (1 - spaceT * 0.45) + 0.03 * spaceT
-        rpd.colorAttachments[0].clearColor = MTLClearColor(red: Double(r), green: Double(g), blue: Double(b), alpha: 1)
+        let clearColor = MTLClearColor(red: Double(r), green: Double(g), blue: Double(b), alpha: 1)
+
+        // -------- Render pass: cielo + scena (offscreen HDR in Ultra, drawable altrove) --------
+        let rpd: MTLRenderPassDescriptor
+        if GameSettings.shared.quality == .ultra {
+            ensureTargets(width: dw, height: dh)
+            guard let sceneTex = sceneTex, let depthTex = depthTex else { return }
+            rpd = offscreenPass(scene: sceneTex, depth: depthTex, clear: clearColor)
+        } else {
+            guard let d = view.currentRenderPassDescriptor else { return }
+            d.colorAttachments[0].clearColor = clearColor
+            rpd = d
+        }
+        guard let enc = cmd.makeRenderCommandEncoder(descriptor: rpd) else { return }
 
         enc.setVertexBuffer(uniformBuffer(), offset: 0, index: 1)
         enc.setCullMode(.none)
+
+        // Cielo procedurale: quad full-screen a depth always, sotto ogni cosa.
+        enc.setRenderPipelineState(pipelineSky)
+        enc.setDepthStencilState(skyDepthState)
+        enc.setFragmentBuffer(uniformBuffer(), offset: 0, index: 1)
+        drawFullscreen(enc: enc, pipeline: pipelineSky)
+
+        enc.setDepthStencilState(depthState)
 
         enc.setRenderPipelineState(pipelineCity)
         enc.setDepthStencilState(depthState)
@@ -167,8 +272,136 @@ final class Renderer: NSObject, MTKViewDelegate {
         drawSonicBoom(enc: enc)
 
         enc.endEncoding()
+
+        // -------- Pass 2: post-process (solo Ultra) --------
+        if GameSettings.shared.quality == .ultra {
+            guard let sceneTex = sceneTex, let bloomATex = bloomA, let bloomBTex = bloomB else { return }
+
+            // Bright pass: scena risolta → bloomA (metà risoluzione).
+            let sceneReadable = sceneResolveTex ?? sceneTex
+            if let enc = cmd.makeRenderCommandEncoder(descriptor: simplePass(target: bloomATex)) {
+                enc.setRenderPipelineState(pipelineBright)
+                enc.setFragmentTexture(sceneReadable, index: 0)
+                drawFullscreen(enc: enc, pipeline: pipelineBright)
+                enc.endEncoding()
+            }
+
+            // Blur separabile H+V: bloomA → bloomB → bloomA (ping-pong).
+            if let enc = cmd.makeRenderCommandEncoder(descriptor: simplePass(target: bloomBTex)) {
+                enc.setRenderPipelineState(pipelineBlurH)
+                enc.setFragmentTexture(bloomATex, index: 0)
+                var dir = SIMD2<Float>(1, 0)   // offset in texel della texture sorgente
+                enc.setFragmentBytes(&dir, length: MemoryLayout<SIMD2<Float>>.stride, index: 4)
+                drawFullscreen(enc: enc, pipeline: pipelineBlurH)
+                enc.endEncoding()
+            }
+            if let enc = cmd.makeRenderCommandEncoder(descriptor: simplePass(target: bloomATex)) {
+                enc.setRenderPipelineState(pipelineBlurV)
+                enc.setFragmentTexture(bloomBTex, index: 0)
+                var dir = SIMD2<Float>(0, 1)
+                enc.setFragmentBytes(&dir, length: MemoryLayout<SIMD2<Float>>.stride, index: 4)
+                drawFullscreen(enc: enc, pipeline: pipelineBlurV)
+                enc.endEncoding()
+            }
+
+            // Composite: scena risolta + bloom → tonemap ACES → drawable finale.
+            guard let rpd = view.currentRenderPassDescriptor else { return }
+            if let enc = cmd.makeRenderCommandEncoder(descriptor: rpd) {
+                enc.setRenderPipelineState(pipelineComposite)
+                enc.setFragmentTexture(sceneResolveTex ?? sceneTex, index: 0)
+                enc.setFragmentTexture(bloomATex, index: 1)
+                enc.setFragmentBytes(&uniforms, length: MemoryLayout<FlyUniforms>.stride, index: 1)
+                drawFullscreen(enc: enc, pipeline: pipelineComposite)
+                enc.endEncoding()
+            }
+        }
+
         cmd.present(drawable)
         cmd.commit()
+    }
+
+    // ------------------------------------------------------------ //
+    //  Target offscreen HDR + MSAA
+
+    private func offscreenPass(scene: MTLTexture, depth: MTLTexture,
+                               clear: MTLClearColor) -> MTLRenderPassDescriptor {
+        let p = MTLRenderPassDescriptor()
+        p.colorAttachments[0].texture = scene
+        p.colorAttachments[0].loadAction = .clear
+        // L'MSAA del colore viene risolto nella texture 2D leggibile dai post-pass.
+        if let resolve = sceneResolveTex {
+            p.colorAttachments[0].storeAction = .multisampleResolve
+            p.colorAttachments[0].resolveTexture = resolve
+        } else {
+            p.colorAttachments[0].storeAction = .store
+        }
+        p.colorAttachments[0].clearColor = clear
+        p.depthAttachment.texture = depth
+        p.depthAttachment.loadAction = .clear
+        p.depthAttachment.storeAction = .dontCare
+        p.depthAttachment.clearDepth = 1.0
+        return p
+    }
+
+    private func simplePass(target: MTLTexture) -> MTLRenderPassDescriptor {
+        let p = MTLRenderPassDescriptor()
+        p.colorAttachments[0].texture = target
+        p.colorAttachments[0].loadAction = .dontCare
+        p.colorAttachments[0].storeAction = .store
+        return p
+    }
+
+    private func ensureTargets(width: Int, height: Int) {
+        let ultra = GameSettings.shared.quality == .ultra
+        let wantScale: Float = ultra ? Float(GameSettings.shared.quality.renderScale) : 1
+        let w = max(1, Int(Float(width) * wantScale))
+        let h = max(1, Int(Float(height) * wantScale))
+        if sceneTex != nil && w == texW && h == texH { return }
+
+        let ultraNow = ultra
+        let fmt: MTLPixelFormat = ultraNow ? .rgba16Float : viewFormat
+        let sampleCount = ultraNow ? 4 : 1
+        let d = MTLTextureDescriptor.texture2DDescriptor(pixelFormat: fmt, width: w, height: h, mipmapped: false)
+        d.usage = [.renderTarget, .shaderRead]
+        d.textureType = sampleCount > 1 ? .type2DMultisample : .type2D
+        d.sampleCount = sampleCount
+        sceneTex = device.makeTexture(descriptor: d)
+
+        // Resolve 2D della scena (campionabile da bright/composite).
+        if sampleCount > 1 {
+            let rd = MTLTextureDescriptor.texture2DDescriptor(pixelFormat: fmt, width: w, height: h, mipmapped: false)
+            rd.usage = [.renderTarget, .shaderRead]
+            rd.textureType = .type2D
+            sceneResolveTex = device.makeTexture(descriptor: rd)
+        } else {
+            sceneResolveTex = nil
+        }
+
+        // Depth MSAA (formato combinato con stencil per Ultra).
+        let dd = MTLTextureDescriptor.texture2DDescriptor(
+            pixelFormat: ultraNow ? .depth32Float : .depth32Float,
+            width: w, height: h, mipmapped: false)
+        dd.usage = .renderTarget
+        dd.textureType = sampleCount > 1 ? .type2DMultisample : .type2D
+        dd.sampleCount = sampleCount
+        depthTex = device.makeTexture(descriptor: dd)
+
+        // Bloom ping-pong a metà risoluzione (sempre 2D, senza MSAA).
+        let bw = max(1, w / 2), bh = max(1, h / 2)
+        let bd = MTLTextureDescriptor.texture2DDescriptor(pixelFormat: fmt, width: bw, height: bh, mipmapped: false)
+        bd.usage = [.renderTarget, .shaderRead]
+        bloomA = device.makeTexture(descriptor: bd)
+        bloomB = device.makeTexture(descriptor: bd)
+
+        texW = w; texH = h
+        prepassScale = wantScale
+    }
+
+    private var viewFormat: MTLPixelFormat = .bgra8Unorm
+
+    private func drawFullscreen(enc: MTLRenderCommandEncoder, pipeline: MTLRenderPipelineState) {
+        enc.setRenderPipelineState(pipeline)
+        enc.drawPrimitives(type: .triangle, vertexStart: 0, vertexCount: 6)
     }
 
     // ------------------------------------------------------------ //
@@ -186,7 +419,9 @@ final class Renderer: NSObject, MTKViewDelegate {
     }
     private var uniformsBuffer: MTLBuffer?
 
-    private func makeUniforms(aspect: Float) -> FlyUniforms {
+    private weak var attachedView: MTKView?
+
+    private func makeUniforms(aspect: Float, width: Float, height: Float) -> FlyUniforms {
         let cp = fly_cam_pos()
         let cq = fly_cam_quat()
         let w2 = sqrtf(max(0, 1 - cq.x*cq.x - cq.y*cq.y - cq.z*cq.z))
@@ -204,7 +439,18 @@ final class Renderer: NSObject, MTKViewDelegate {
         fov += fly_sonic_ripple() * 0.25                     // kick all'onda d'urto
         let proj = MathUtil.perspective(fovY: fov, aspect: aspect, zNear: 0.5, zFar: 2200)
         let view = MathUtil.lookFrom(eye: camPos, quat: SIMD4<Float>(cq.x, cq.y, cq.z, w2))
-        return FlyUniforms(viewProj: proj * view, cameraPos: camPos, time: Float(fly_time()))
+        let viewProj = proj * view
+        let u = FlyUniforms(
+            viewProj: viewProj,
+            invViewProj: viewProj.inverse,
+            cameraPos: camPos,
+            time: Float(fly_time()),
+            cameraFwd: MathUtil.camForward(quat: SIMD4<Float>(cq.x, cq.y, cq.z, w2)),
+            aspect: aspect,
+            sunDir: MathUtil.sunDirection(time: Float(fly_time())),
+            prepassScale: prepassScale,
+            bufferSize: SIMD2<Float>(width, height))
+        return u
     }
 
     private func ensure(_ buf: inout MTLBuffer?, capacity: inout Int, needed: Int) -> MTLBuffer {
@@ -280,17 +526,24 @@ final class Renderer: NSObject, MTKViewDelegate {
     }
 
     private func buildMeshes() {
-        let sph = makeSphere(rings: 10, segments: 14)
+        // Ultra 4K: tessiture più dense (anelli e segmenti extra).
+        let ultra = GameSettings.shared.quality == .ultra
+
+        let rings = ultra ? 14 : 10
+        let segs = ultra ? 20 : 14
+        let sph = makeSphere(rings: rings, segments: segs)
         sphereICount = sph.i.count
         sphereVB = device.makeBuffer(bytes: sph.v, length: sph.v.count * 4, options: .storageModeShared)
         sphereIB = device.makeBuffer(bytes: sph.i, length: sph.i.count * 2, options: .storageModeShared)
 
-        let cap = makeCapsule(segments: 10, rings: 4)
+        let cap = makeCapsule(segments: ultra ? 14 : 10, rings: ultra ? 6 : 4)
         capsuleICount = cap.i.count
         capsuleVB = device.makeBuffer(bytes: cap.v, length: cap.v.count * 4, options: .storageModeShared)
         capsuleIB = device.makeBuffer(bytes: cap.i, length: cap.i.count * 2, options: .storageModeShared)
 
-        // Indici del mantello (16 quad × 4 vertici).
+        // Indici del mantello (12 quad × 4 vertici). removeAll: la funzione può
+        // essere richiamata da applyQuality senza duplicare gli indici.
+        capeIndices.removeAll()
         for q in 0..<Self.capeQuadCount {
             let b = UInt16(q * 4)
             capeIndices.append(contentsOf: [b, b+2, b+1, b+1, b+2, b+3])
@@ -299,7 +552,7 @@ final class Renderer: NSObject, MTKViewDelegate {
 
     private func buildClouds() {
         var list: [InstanceData] = []
-        for i in 0..<22 {
+        for i in 0..<32 {
             let t = Float(i)
             let ang = t * 2.39996   // golden angle
             let rad = 260 + (t * 61).truncatingRemainder(dividingBy: 620)
@@ -358,42 +611,43 @@ final class Renderer: NSObject, MTKViewDelegate {
     }
 
     private func drawClouds(enc: MTLRenderCommandEncoder) {
-        guard let cb = cloudBuffer, !cloudInstances.isEmpty else { return }
-        // Media: una nuvola su due; Lite: niente nuvole.
+        guard cloudBuffer != nil, !cloudInstances.isEmpty else { return }
+        // Ultra/alta: tutte le nuvole; Media: metà; Lite: niente.
         switch GameSettings.shared.quality {
         case .lite: return
         case .media:
-            var half = [InstanceData]()
-            for (i, inst) in cloudInstances.enumerated() where i % 2 == 0 { half.append(inst) }
-            if cloudCapacity < half.count {
-                cloudCapacity = half.count * 2
-                cloudDynamicBuffer = device.makeBuffer(length: cloudCapacity * MemoryLayout<InstanceData>.stride,
-                                                       options: .storageModeShared)
-            }
-            if let dyn = cloudDynamicBuffer {
-                dyn.contents().copyMemory(from: half, byteCount: half.count * MemoryLayout<InstanceData>.stride)
-                enc.setRenderPipelineState(pipelineCloud)
-                enc.setDepthStencilState(noDepthState)
-                enc.setVertexBuffer(dyn, offset: 0, index: 2)
-                var c = Int32(half.count)
-                enc.setVertexBytes(&c, length: MemoryLayout<Int32>.stride, index: 3)
-                enc.drawPrimitives(type: .triangle, vertexStart: 0, vertexCount: 36,
-                                   instanceCount: half.count)
-            }
-        case .alta:
-            enc.setRenderPipelineState(pipelineCloud)
-            enc.setDepthStencilState(noDepthState)   // senza scrittura depth: evita pop
-            enc.setVertexBuffer(cb, offset: 0, index: 2)
-            var c = Int32(cloudInstances.count)
-            enc.setVertexBytes(&c, length: MemoryLayout<Int32>.stride, index: 3)
-            enc.drawPrimitives(type: .triangle, vertexStart: 0, vertexCount: 36,
-                               instanceCount: cloudInstances.count)
+            drawCloudRange(enc: enc, indices: stride(from: 0, to: cloudInstances.count, by: 2))
+        case .alta, .ultra:
+            let n = min(GameSettings.shared.quality.cloudCount, cloudInstances.count)
+            drawCloudRange(enc: enc, indices: 0..<n)
         }
         enc.setRenderPipelineState(pipelineCity)
         enc.setDepthStencilState(depthState)
     }
+
+    private func drawCloudRange<S: Sequence>(enc: MTLRenderCommandEncoder, indices: S)
+        where S.Element == Int {
+        enc.setRenderPipelineState(pipelineCloud)
+        enc.setDepthStencilState(noDepthState)   // senza scrittura depth: evita pop
+        var all: [InstanceData] = []
+        for i in indices where i >= 0 && i < cloudInstances.count { all.append(cloudInstances[i]) }
+        if all.isEmpty { return }            if cloudDynamicBuffer == nil || cloudDynamicCapacity < all.count {
+                cloudDynamicCapacity = all.count * 2
+                cloudDynamicBuffer = device.makeBuffer(length: cloudDynamicCapacity * MemoryLayout<InstanceData>.stride,
+                                                       options: .storageModeShared)
+            }
+        if let dyn = cloudDynamicBuffer {
+            all.withUnsafeBytes { raw in
+                dyn.contents().copyMemory(from: raw.baseAddress!, byteCount: all.count * MemoryLayout<InstanceData>.stride)
+            }
+            enc.setVertexBuffer(dyn, offset: 0, index: 2)
+            var c = Int32(all.count)
+            enc.setVertexBytes(&c, length: MemoryLayout<Int32>.stride, index: 3)
+            enc.drawPrimitives(type: .triangle, vertexStart: 0, vertexCount: 36, instanceCount: all.count)
+        }
+    }
     private var cloudDynamicBuffer: MTLBuffer?
-    private var cloudCapacity = 0
+    private var cloudDynamicCapacity = 0
 
     // ------------------------------------------------------------ //
     //  SUPERMAN: corpo articolato con mesh vere + mantello animato
@@ -891,5 +1145,17 @@ enum MathUtil {
 
     static func rotateQuat(x: Float, y: Float, z: Float, w: Float) -> simd_float4x4 {
         return simd_float4x4(simd_quatf(ix: x, iy: y, iz: z, r: w))
+    }
+
+    /// Direzione di vista della camera (per il cielo procedurale).
+    static func camForward(quat: SIMD4<Float>) -> SIMD3<Float> {
+        let q = simd_quatf(ix: quat.x, iy: quat.y, iz: quat.z, r: quat.w)
+        return q.act(SIMD3<Float>(0, 0, -1))
+    }
+
+    /// Sole che sorge/tramonta lentamente col tempo di gioco (ciclo ~4 minuti).
+    static func sunDirection(time: Float) -> SIMD3<Float> {
+        let ang = time * 0.026            // un ciclo completo ≈ 4 minuti
+        return SIMD3<Float>(sin(ang) * 0.8, sin(ang) * 0.55 + 0.30, cos(ang) * 0.8 - 0.3)
     }
 }

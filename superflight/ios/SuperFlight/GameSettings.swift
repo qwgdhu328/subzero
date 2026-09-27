@@ -6,12 +6,14 @@ enum GraphicsQuality: Int, CaseIterable {
     case alta = 0    // tutto: 40 NPC, nuvole, particelle complete
     case media = 1   // 20 NPC, metà nuvole, metà particelle
     case lite = 2    // 8 NPC, niente nuvole, un quarto delle particelle
+    case ultra = 3   // 4K Ultra: HDR+MSAA+bloom, 60 NPC, 900 particelle, 32 nuvole
 
     var label: String {
         switch self {
         case .alta: return "Alta"
         case .media: return "Media"
         case .lite: return "Lite"
+        case .ultra: return "Ultra 4K"
         }
     }
     var npcLimit: Int32 {
@@ -19,6 +21,7 @@ enum GraphicsQuality: Int, CaseIterable {
         case .alta: return 40
         case .media: return 20
         case .lite: return 8
+        case .ultra: return 60
         }
     }
     var particleLimit: Int32 {
@@ -26,6 +29,27 @@ enum GraphicsQuality: Int, CaseIterable {
         case .alta: return 600
         case .media: return 300
         case .lite: return 120
+        case .ultra: return 900
+        }
+    }
+    // Risoluzione di rendering relativa allo schermo (1.0 = nativa del device,
+    // tipicamente 3x su iPhone → ~4K su schermi ProMotion). Ultra renderizza alla
+    // scala nativa massima con pipeline HDR+MSAA.
+    var renderScale: CGFloat {
+        switch self {
+        case .ultra: return 1.0
+        case .alta: return 1.0
+        case .media: return 0.75
+        case .lite: return 0.5
+        }
+    }
+    // Nuvole disegnate (il motore grafico genera 32 istanze totali).
+    var cloudCount: Int {
+        switch self {
+        case .ultra: return 32
+        case .alta: return 22
+        case .media: return 11
+        case .lite: return 0
         }
     }
 }
