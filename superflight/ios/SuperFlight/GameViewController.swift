@@ -53,6 +53,7 @@ final class GameViewController: UIViewController {
         gameView.preferredFramesPerSecond = 120
         gameView.isUserInteractionEnabled = true
         gameView.touchDelegate = touch
+        touch.attach(to: gameView)      // senza questo il joystick non invia input
         view.addSubview(gameView)
 
         renderer = Renderer(metalKitView: gameView)

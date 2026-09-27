@@ -283,18 +283,18 @@ final class Renderer: NSObject, MTKViewDelegate {
         var footL: simd_float4x4; var footR: simd_float4x4
 
         if walking {
-            // Camminata: braccia e gambe che si alternano ( ciclo passo ).
+            // Camminata: braccia e gambe che si alternano (ciclo passo).
             let moving = fly_speed() > 1.0
-            let a: Float = moving ? sin(t * 8.0) * 0.5 : 0
-            let b: Float = moving ? sin(t * 8.0 + Float.pi) * 0.5 : 0
+            let a: Float = moving ? sin(t * 10.0) * 0.6 : 0
+            let b: Float = moving ? sin(t * 10.0 + Float.pi) * 0.6 : 0
             armL = part(R, [ 0.80, 0.50, 0.05], a, 0,  0.06, [0.20, 0.20, 0.95])
             armR = part(R, [-0.80, 0.50, 0.05], b, 0, -0.06, [0.20, 0.20, 0.95])
-            fistL = part(R, [ 0.80, 0.50 + 0.95 * sin(a), 0.05 - 0.95 * cos(a)], 0, 0, 0, [0.26, 0.26, 0.26])
-            fistR = part(R, [-0.80, 0.50 + 0.95 * sin(b), 0.05 - 0.95 * cos(b)], 0, 0, 0, [0.26, 0.26, 0.26])
+            fistL = part(R, [ 0.80, 0.50, -0.90], 0, 0, 0, [0.26, 0.26, 0.26])
+            fistR = part(R, [-0.80, 0.50, -0.90], 0, 0, 0, [0.26, 0.26, 0.26])
             hipL = part(R, [ 0.30, -0.30, 0.10], b * 1.1, 0, 0, [0.28, 0.28, 1.15])
             hipR = part(R, [-0.30, -0.30, 0.10], a * 1.1, 0, 0, [0.28, 0.28, 1.15])
-            footL = part(R, [ 0.30, -0.30 + 1.15 * sin(b * 1.1), 0.10 - 1.15 * cos(b * 1.1)], 0, 0, 0, [0.30, 0.18, 0.5])
-            footR = part(R, [-0.30, -0.30 + 1.15 * sin(a * 1.1), 0.10 - 1.15 * cos(a * 1.1)], 0, 0, 0, [0.30, 0.18, 0.5])
+            footL = part(R, [ 0.30, -0.30 - 0.55 * (1 - cos(b * 1.1)), 0.10 - 1.1 * sin(b * 1.1)], 0, 0, 0, [0.30, 0.18, 0.5])
+            footR = part(R, [-0.30, -0.30 - 0.55 * (1 - cos(a * 1.1)), 0.10 - 1.1 * sin(a * 1.1)], 0, 0, 0, [0.30, 0.18, 0.5])
         } else {
             // Volo: braccia in estensione; crash: braccia aperte.
             let armFwd: Float = flying ? 1.0 : 0.0

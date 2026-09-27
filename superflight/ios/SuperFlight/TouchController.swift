@@ -19,6 +19,10 @@ final class TouchController: NSObject {
         super.init()
     }
 
+    /// Indispensabile: la vista su cui leggere le coordinate del dito.
+    /// Senza questa chiamata il joystick resta morto (updateStick esce dal guard).
+    func attach(to v: UIView) { view = v }
+
     // ------------------------------------------------------------ //
 
     private func clampCG(_ v: CGFloat) -> CGFloat {
