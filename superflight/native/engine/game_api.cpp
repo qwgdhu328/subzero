@@ -70,6 +70,7 @@ float   fly_laser_heat(void)   { return g ? g->laserHeat : 0; }
 int32_t fly_laser_active(void) { return g && g->laserActive && !g->laserOverheat ? 1 : 0; }
 int32_t fly_laser_hit(void)    { return g && g->laserHit ? 1 : 0; }
 int32_t fly_on_ground(void)    { return g && g->state == GameState::Walking && g->onGround ? 1 : 0; }
+float   fly_anim_phase(void)   { return g ? g->animPhase : 0; }
 
 FlyVec3 fly_player_pos(void) { return g ? v3(g->playerPos) : FlyVec3{0, 60, 0}; }
 

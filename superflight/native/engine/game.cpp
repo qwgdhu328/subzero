@@ -10,8 +10,8 @@ namespace fly {
 //  Parametri di gioco (tweak qui)
 // ---------------------------------------------------------------------- //
 static constexpr float kBaseSpeed    = 42.0f;   // m/s
-static constexpr float kBoostSpeed   = 95.0f;   // m/s
-static constexpr float kAccel        = 55.0f;   // m/s^2
+static constexpr float kBoostSpeed   = 833.0f;  // m/s ≈ 3000 km/h in boost
+static constexpr float kAccel        = 210.0f;  // m/s^2: spinta da supereroe fino a max speed
 static constexpr float kTurnRate     = 1.9f;    // rad/s
 static constexpr float kRollRate     = 2.6f;    // rad/s
 static constexpr float kMaxPitch     = 1.15f;   // rad
@@ -257,11 +257,11 @@ void GameStateData::updateFlying(double dt) {
                * Quat::fromAxisAngle({1, 0, 0}, pitch)
                * Quat::fromAxisAngle({0, 0, 1}, roll);
 
-    // Velocità + boost.
+    // Velocità + boost (spinta da supereroe fino a ~3000 km/h).
     float target = inputBoost && boostFuel > 0 ? kBoostSpeed : kBaseSpeed;
     speed += clampf(target - speed, -kAccel * dts, kAccel * dts);
     if (inputBoost && boostFuel > 0) {
-        boostFuel = std::max(0.0f, boostFuel - dts * 0.22f);
+        boostFuel = std::max(0.0f, boostFuel - dts * 0.18f);
         if (frames % 2 == 0)
             spawnBurst(playerPos - playerQuat.forward() * 3.0f, 2, 0.08f);
     } else {
@@ -575,9 +575,11 @@ void GameStateData::updateWalking(double dt) {
     const float vMove = -inputPitch * kWalkSpeed;  // su = avanti
     Vec3 vel = fwd * vMove + strafe * (0.0f);
 
-    // Corsa con boost (veloce anche a piedi).
+    // Corsa con boost (veloce anche a piedi); fase animazione dal movimento reale.
+    const float vNow = inputBoost ? kRunSpeed : kWalkSpeed;
     if (inputBoost) vel = fwd * (kRunSpeed);
     playerPos = playerPos + vel * dts;
+    animPhase += (vNow * dts) / 1.1f;   // un ciclo ogni ~1.1 m percorsi (da videogioco)
 
     // Gravità e salto.
     vy -= kGravityWalk * dts;

@@ -86,6 +86,7 @@ struct GameStateData {
     float vy = 0;                    // velocità verticale (salto/caduta)
     bool onGround = true;
     bool landing = false;            // discesa in atterraggio dal volo
+    float animPhase = 0;             // fase animazione camminata/corsa (legge il renderer)
 
     // --- input (valori normalizzati -1..1) ---
     float inputPitch = 0;

@@ -407,7 +407,12 @@ final class Renderer: NSObject, MTKViewDelegate {
         let onGround = fly_on_ground() == 1
         let t = Float(fly_time())
         let heroQ = simd_quatf(ix: q.x, iy: q.y, iz: q.z, r: qw)
-        let root = MathUtil.translate(x: p.x, y: p.y, z: p.z) * simd_float4x4(heroQ)
+        // Bounce cinematico: a terra il corpo ondeggia col ciclo del passo.
+        let phase = fly_anim_phase()
+        let runFactor = min(1.0, fly_speed() / 20.0)          // 0 cammina, 1 corre
+        let bounce: Float = walking && onGround
+            ? (abs(sin(phase)) * 0.05 + 0.03) * (0.6 + 0.4 * runFactor) : 0
+        let root = MathUtil.translate(x: p.x, y: p.y + bounce, z: p.z) * simd_float4x4(heroQ)
         let boosting = flying && fly_speed() > 55
 
         enc.setRenderPipelineState(pipelineMesh)
@@ -422,19 +427,25 @@ final class Renderer: NSObject, MTKViewDelegate {
         let kSkin  = SIMD4<Float>(0.93, 0.75, 0.62, 1)
         let kGold  = SIMD4<Float>(0.95, 0.78, 0.25, 2)   // alpha 2 = emissivo
 
-        // --- pose ---
+        // --- pose cinematiche ---
         var legSwing: Float = 0
         var legTuck: Float = 0
         var armSwing: Float = 0
         var lean: Float = 0
+        var armSpread: Float = 0        // apertura gomiti (corsa)
         if walking && onGround {
             let moving = fly_speed() > 1.0
-            let a: Float = moving ? sin(t * 10.0) * 0.65 : 0.06
+            // Ampiezza e frequenza crescono con la corsa; fase dal motore (passi reali).
+            let amp = 0.35 + 0.45 * runFactor
+            let a: Float = moving ? sin(phase) * amp : 0.06
             legSwing = a
-            armSwing = -a * 0.8
-            lean = moving ? -0.10 : 0
+            armSwing = -a * (0.85 + 0.5 * runFactor)
+            armSpread = runFactor * 0.5
+            // Corsa: busto in avanti (più inclinato più corri) + rollio dolce.
+            lean = moving ? (-0.12 - 0.16 * runFactor) + sin(phase * 2.0) * 0.015 : 0
         } else if walking && !onGround {
-            legTuck = -0.8; legSwing = -0.3; armSwing = 0.9; lean = -0.15
+            // Salto cinematografico: gambe raccolte, braccia aperte in alto.
+            legTuck = -0.9; legSwing = -0.35; armSwing = 1.0; armSpread = 0.6; lean = -0.18
         }
 
         let armFwd: Float = flying ? 1.0 : 0.0
@@ -460,7 +471,7 @@ final class Renderer: NSObject, MTKViewDelegate {
             * MathUtil.scaleNonUniform(sx: 0.22, sy: 0.12, sz: 0.23)
         drawPart(enc, hair, SIMD4<Float>(0.14, 0.10, 0.07, 1), sphere: false)
 
-        // braccia: spalla→gomito→pugno (capsule: sy = L/4, centro a -L/2)
+        // braccia: spalla→gomito→pugno; in corsa gomiti piegati e contrappeso ampio
         for s: Float in [-1, 1] {
             let swing = armSwing * -s
             let shoulder = R * MathUtil.translate(x: 0.34 * s, y: 1.22, z: 0)
@@ -471,7 +482,9 @@ final class Renderer: NSObject, MTKViewDelegate {
                 * MathUtil.scaleNonUniform(sx: 0.085, sy: upperLen/4, sz: 0.085)
             drawPart(enc, uaM, kBlue, sphere: false)
             let elbow = shoulder * uaRot * MathUtil.translate(x: 0, y: -upperLen, z: 0)
-            let angFA = 0.35 + 1.05 * armFwd
+            // Gomito: disteso in volo, piegato in corsa (da cinema), semi in camminata.
+            let elbowBend = armFwd > 0.5 ? 0.35 : (0.35 + 1.05 * (1 - runFactor)) - armSpread * 0.5
+            let angFA = elbowBend + swing * 0.4
             let faRot = uaRot * MathUtil.rotateQuat(x: sin(angFA/2), y: 0, z: 0, w: cos(angFA/2))
             let foreLen: Float = 0.28
             let faM = elbow * faRot * MathUtil.translate(x: 0, y: -foreLen/2, z: 0)
@@ -482,7 +495,7 @@ final class Renderer: NSObject, MTKViewDelegate {
             drawPart(enc, fistM, kSkin, sphere: true)
         }
 
-        // gambe: anca→ginocchio→stivale (capsule: sy = L/4)
+        // gambe: anca→ginocchio→stivale; in corsa il tallone risale verso il gluteo
         for s: Float in [-1, 1] {
             let swing = legSwing * s + legTuck
             let hip = R * MathUtil.translate(x: 0.14 * s, y: 0.62, z: 0)
@@ -492,7 +505,9 @@ final class Renderer: NSObject, MTKViewDelegate {
                 * MathUtil.scaleNonUniform(sx: 0.11, sy: thLen/4, sz: 0.11)
             drawPart(enc, thM, kBlue2, sphere: false)
             let knee = hip * thRot * MathUtil.translate(x: 0, y: -thLen, z: 0)
-            let shinRot = thRot * MathUtil.rotateQuat(x: sin(max(0, -swing) * 0.6 / 2), y: 0, z: 0, w: cos(max(0, -swing) * 0.6 / 2))
+            // Ginocchio: dietro quando la gamba va indietro; recupero ampio in corsa.
+            let kneeBend = max(0, -swing) * 0.6 + runFactor * max(0, -swing) * 1.6
+            let shinRot = thRot * MathUtil.rotateQuat(x: sin(kneeBend / 2), y: 0, z: 0, w: cos(kneeBend / 2))
             let shLen: Float = 0.30
             let shM = knee * shinRot * MathUtil.translate(x: 0, y: -shLen/2, z: 0)
                 * MathUtil.scaleNonUniform(sx: 0.09, sy: shLen/4, sz: 0.09)
@@ -503,9 +518,13 @@ final class Renderer: NSObject, MTKViewDelegate {
         }
 
         // --- mantello animato (buffer vertici ricostruito ogni frame) ---
-        drawCape(enc: enc, root: R, t: t, flying: flying,
-                 wind: flying ? (0.55 + 0.45 * min(1, fly_speed() / 80.0)) : 0.25,
-                 lift: flying ? 0.55 : 0.0)
+        // In corsa il mantello sventola dietro, quasi orizzontale (cinematico).
+        let capeWind = flying
+            ? (0.55 + 0.45 * min(1, fly_speed() / 80.0))
+            : (0.3 + 0.7 * runFactor)
+        let capeLift = flying ? 0.55 : 0.25 * runFactor
+        drawCape(enc: enc, root: R, t: t, flying: flying || (walking && runFactor > 0.6),
+                 wind: capeWind, lift: capeLift)
 
         // fiamma del boost
         if boosting {
