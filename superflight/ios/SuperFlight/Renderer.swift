@@ -429,7 +429,7 @@ final class Renderer: NSObject, MTKViewDelegate {
         d.mipFilter = .notMipmapped
         d.sAddressMode = .clampToEdge
         d.tAddressMode = .clampToEdge
-        d.compareFunction = nil          // PCF manuale: comparazione nel fragment
+        d.compareFunction = .never       // sampler normale: PCF manuale nel fragment
         return device.makeSamplerState(descriptor: d)!
     }()
 
