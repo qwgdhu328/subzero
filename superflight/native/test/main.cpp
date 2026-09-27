@@ -54,6 +54,32 @@ int main() {
     printf("NPC: %d, in fuga col laser: %d\n", npcCount, fleeing);
     if (fleeing == 0) { printf("FALLITO: nessun NPC scappa dal laser\n"); return 1; }
 
+    // Test gameplay AAA: nemici con AI, proiettili, combo, skill, vento.
+    printf("-- gameplay AAA (nemici/combo/skill/vento) --\n");
+    fly_reset(0);
+    fly_start_game();
+    fly_toggle_fly();                     // decolla subito
+    for (int i = 0; i < 60; ++i) fly_update(1.0/120.0, 1170, 2532);
+    if (fly_state() != 1) { printf("FALLITO: non e' in volo\n"); return 1; }
+    // Vola dritto per 12 s: almeno un'ondata di nemici deve spawnare.
+    for (int i = 0; i < 1440; ++i) fly_update(1.0/120.0, 1170, 2532);
+    int eCount = fly_enemy_count();
+    FlyVec3 wind; float turb = -1.0f;
+    fly_wind(&wind, &turb);
+    printf("Nemici: %d, proiettili: %d, vita: %.2f, vento: (%.1f, %.1f, %.1f) m/s, turb: %.2f\n",
+           eCount, fly_projectile_count(), fly_health(),
+           wind.x, wind.y, wind.z, turb);
+    if (eCount <= 0) { printf("FALLITO: nessun nemico generato in volo\n"); return 1; }
+    if (turb < 0.0f || turb > 1.0f) { printf("FALLITO: turbolenza fuori range\n"); return 1; }
+    if (wind.x == 0 && wind.y == 0 && wind.z == 0) { printf("FALLITO: vento nullo\n"); return 1; }
+    // Danni subiti o no, la vita resta in [0,1].
+    float hp = fly_health();
+    if (hp < 0.0f || hp > 1.0f) { printf("FALLITO: vita fuori range\n"); return 1; }
+    // Skill tree: simula punteggio alto e spendi punti.
+    for (int i = 0; i < 3; ++i) fly_upgrade_skill(0);   // senza punti: no-op
+    if (fly_skill_points() != 0) { printf("FALLITO: skill senza punti\n"); return 1; }
+    printf("OK gameplay AAA\n");
+
     const double dt = 1.0 / 120.0;          // fixed timestep 120 Hz
     const double duration = 180.0;          // simula 3 minuti di gioco
     int resets = 0;

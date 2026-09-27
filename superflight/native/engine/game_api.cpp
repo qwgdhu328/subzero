@@ -165,14 +165,51 @@ void fly_npc(int32_t i, FlyVec3* pos, float* yaw, float* phase,
 int32_t fly_laser_seg_count(void) {
     return g ? (int32_t)g->laserSegs.size() : 0;
 }
+// ---------------------------------------------------------------- //
+// Gameplay AAA: nemici, proiettili, carriera, fluidodinamica
 
-void fly_laser_seg(int32_t i, FlyVec3* a, FlyVec3* b, float* width,
-                   float* life01) {
-    if (!g || i < 0 || i >= (int32_t)g->laserSegs.size()) return;
-    const auto& s = g->laserSegs[i];
-    if (a) *a = v3(s.a);
-    if (b) *b = v3(s.b);
-    if (width) *width = s.width;
-    if (life01) *life01 = s.life / 0.05f;
+int32_t fly_enemy_count(void) { return g ? (int32_t)g->enemies.size() : 0; }
+
+void fly_enemy(int32_t i, FlyVec3* pos, FlyVec3* vel, float* yaw,
+               int32_t* type, int32_t* ai_state, float* hp01) {
+    if (!g || i < 0 || i >= (int32_t)g->enemies.size()) return;
+    const Enemy& e = g->enemies[i];
+    if (pos) *pos = v3(e.pos);
+    if (vel) *vel = v3(e.vel);
+    if (yaw) *yaw = e.yaw;
+    if (type) *type = (int32_t)e.type;
+    if (ai_state) *ai_state = e.aiState;
+    if (hp01) *hp01 = e.health / e.maxHealth;
+}
+
+int32_t fly_projectile_count(void) { return g ? (int32_t)g->projectiles.size() : 0; }
+
+void fly_projectile(int32_t i, FlyVec3* pos, FlyVec3* vel) {
+    if (!g || i < 0 || i >= (int32_t)g->projectiles.size()) return;
+    const Projectile& pr = g->projectiles[i];
+    if (pos) *pos = v3(pr.pos);
+    if (vel) *vel = v3(pr.vel);
+}
+
+float   fly_health(void)              { return g ? g->health : 1.0f; }
+int32_t fly_combo(void)               { return g ? g->combo.combo : 0; }
+float   fly_combo_multiplier(void)    { return g ? g->combo.multiplier : 1.0f; }
+int32_t fly_combo_best(void)          { return g ? g->profile.comboBest : 0; }
+int32_t fly_enemy_defeated_total(void){ return g ? g->profile.enemiesDefeated : 0; }
+int32_t fly_total_score(void)         { return g ? g->profile.totalScore : 0; }
+int32_t fly_skill_points(void)        { return g ? g->profile.skillPoints : 0; }
+
+float fly_skill_level(int32_t skill) {
+    return g ? g->profile.skills.level((int)skill) : 0.0f;
+}
+
+int32_t fly_upgrade_skill(int32_t skill) {
+    return (g && g->upgradeSkill((int)skill)) ? 1 : 0;
+}
+
+void fly_wind(FlyVec3* wind, float* turbulence) {
+    if (!g) return;
+    if (wind) *wind = v3(g->fluid.windVelocity);
+    if (turbulence) *turbulence = g->fluid.turbulenceLevel;
 }
 

@@ -74,6 +74,23 @@ int32_t fly_npc_count(void);
 void    fly_npc(int32_t i, FlyVec3* pos, float* yaw, float* phase,
                 int32_t* flee, float* tint);
 
+// Gameplay AAA (GAMEPLAY_PHYSICS_AAA): nemici, proiettili, carriera
+int32_t fly_enemy_count(void);
+void    fly_enemy(int32_t i, FlyVec3* pos, FlyVec3* vel, float* yaw,
+                  int32_t* type, int32_t* ai_state, float* hp01);
+int32_t fly_projectile_count(void);
+void    fly_projectile(int32_t i, FlyVec3* pos, FlyVec3* vel);
+float   fly_health(void);                 // 0..1 integrità giocatore
+int32_t fly_combo(void);                   // colpi di combo correnti
+float   fly_combo_multiplier(void);        // 1.0..2.0
+int32_t fly_combo_best(void);              // record carriera
+int32_t fly_enemy_defeated_total(void);    // nemici abbattuti (carriera)
+int32_t fly_total_score(void);             // punteggio carriera totale
+int32_t fly_skill_points(void);            // punti abilità disponibili
+float   fly_skill_level(int32_t skill);    // livello 0..5 del ramo
+int32_t fly_upgrade_skill(int32_t skill);  // spende 1 punto (1 = ok)
+void    fly_wind(FlyVec3* wind, float* turbulence);  // fluidodinamica per HUD/FX
+
 #ifdef __cplusplus
 }
 #endif

@@ -41,6 +41,20 @@ static constexpr float kWalkTurn     = 2.2f;    // rad/s svolta a terra
 static constexpr float kJumpV        = 16.0f;   // velocità iniziale di salto m/s
 static constexpr float kGravityWalk  = 26.0f;   // gravità in modalità a piedi
 static constexpr float kEyeHeightWalk = 1.62f;  // occhi a 1.62 m quando in piedi
+// Vento e fluidodinamica (GAMEPLAY_PHYSICS_AAA §1)
+static constexpr float kWindBase     = 9.0f;    // m/s: intensità vento procedurale
+static constexpr float kWindPush     = 0.18f;   // frazione del vento trasmessa al corpo
+// Nemici (GAMEPLAY_PHYSICS_AAA §2)
+static constexpr float kEnemySpeedDrone  = 32.0f;   // m/s
+static constexpr float kEnemySpeedScout  = 52.0f;   // m/s
+static constexpr float kEnemyHPDrone     = 1.0f;
+static constexpr float kEnemyHPScout     = 0.7f;
+static constexpr float kEnemyBulletSpeed = 130.0f;
+static constexpr float kEnemyBulletLife  = 3.5f;
+static constexpr float kEnemyDamage      = 0.12f;   // per colpo a resistenza base
+static constexpr float kEnemyLaserDPS    = 2.0f;    // danno laser/sec ai nemici
+static constexpr float kEnemySpawnEvery  = 5.0f;    // secondi tra le ondate
+static constexpr int   kEnemyWaveSize    = 2;
 
 // RNG deterministico (stessa città per stessa seed → riproducibile).
 static std::mt19937& rng() {
@@ -271,15 +285,27 @@ void GameStateData::recycleWorld() {
 
 void GameStateData::update(double dt, int32_t, int32_t) {
     time += dt;
+    combo.update((float)dt);
+    hitTimer = std::max(0.0f, hitTimer - (float)dt);
+    // Rigenerazione lenta fuori dal combattimento (2 s senza colpi).
+    if (hitTimer <= 0.0f && health < 1.0f) health = std::min(1.0f, health + (float)dt * 0.04f);
     if (state == GameState::Flying) {
         updateFlying(dt);
+        updateFluid(dt);
         updateLaser(dt);
     } else if (state == GameState::Walking) {
         updateWalking(dt);
     } else if (state == GameState::Crashed) updateCrashed(dt);
+    updateEnemies(dt);
+    updateProjectiles(dt);
     updateNpcs(dt);
     updateDebris(dt);
     updateParticles(dt);
+    // Progressione: un punto abilità ogni soglia di punteggio di carriera.
+    while (profile.totalScore >= profile.nextSkillScore) {
+        profile.skillPoints++;
+        profile.nextSkillScore += 4000;
+    }
     shake = std::max(0.0f, shake - (float)dt * 1.6f);
     ++frames;
 }
@@ -287,10 +313,11 @@ void GameStateData::update(double dt, int32_t, int32_t) {
 void GameStateData::updateFlying(double dt) {
     const float dts = (float)std::min(dt, 0.05);
 
-    // Rotazioni dagli input (tocco/tilt dalla shell Swift).
-    pitch += inputPitch * kTurnRate * dts;
-    yaw   -= inputYaw   * kTurnRate * dts;
-    roll += (inputRoll * kRollRate * dts - roll * 3.2f * dts);
+    // Rotazioni dagli input; l'abilità "manovrabilità" accelera virata e rollio.
+    const float turnMul = 1.0f + profile.skills.maneuverability * 0.10f;
+    pitch += inputPitch * kTurnRate * turnMul * dts;
+    yaw   -= inputYaw   * kTurnRate * turnMul * dts;
+    roll += (inputRoll * kRollRate * turnMul * dts - roll * 3.2f * dts);
     pitch = clampf(pitch, -kMaxPitch, kMaxPitch);
     roll  = clampf(roll, -kMaxRoll, kMaxRoll);
     roll  *= (1.0f - 1.4f * dts);   // roll tende a riallinearsi
@@ -303,7 +330,9 @@ void GameStateData::updateFlying(double dt) {
     // Velocità + boost con drag atmosferico reale (§2 del doc):
     // Cd(M) subsonico 0.3, spike transonico fino a 0.8, decadimento ipersonico 0.8/sqrt(M^2-1);
     // densità esponenziale rho(h) — salendo in alto il boost porta oltre Mach 1.
-    float target = inputBoost && boostFuel > 0 ? kBoostSpeed : kBaseSpeed;
+    // L'abilità "velocità massima" alza il tetto del boost (+6% per livello).
+    float target = inputBoost && boostFuel > 0
+        ? kBoostSpeed * (1.0f + profile.skills.speedMax * 0.06f) : kBaseSpeed;
     const float mach = speed / kMachOne;
     float cd;
     if (mach < 0.8f) cd = 0.3f;
@@ -323,8 +352,10 @@ void GameStateData::updateFlying(double dt) {
         boostFuel = std::min(1.0f, boostFuel + dts * 0.06f);
     }
 
-    // Movimento in avanti (il "forward" del giocatore).
+    // Movimento in avanti + deriva del vento: vento procedurale e turbolenza
+    // rendono il volo "pesante" (GAMEPLAY_PHYSICS_AAA §1).
     playerPos = playerPos + playerQuat.forward() * (speed * dts);
+    playerPos = playerPos + fluid.windVelocity * (kWindPush * dts);
     altitude = playerPos.y;
     score = std::max(score, (int)(-playerPos.z / 10.0f) + ringsPassed * 50);
 
@@ -375,7 +406,7 @@ void GameStateData::updateFlying(double dt) {
             r.passed = true;
             r.alive = false;
             ringsPassed++;
-            score += 50;
+            addComboAction(50);                // anello nella combo (§3 del doc)
             boostFuel = std::min(1.0f, boostFuel + 0.25f);
             spawnBurst(r.pos, 26, 0.14f);
         }
@@ -489,10 +520,238 @@ void GameStateData::updateLaser(double dt) {
         }
     }
 
+    // Danno ai nemici lungo il raggio (line-sphere, GAMEPLAY_PHYSICS_AAA §2):
+    // l'abilità "laser power" moltiplica il danno (+25% per livello).
+    {
+        const float dmg = kEnemyLaserDPS * dts * (1.0f + profile.skills.laserPower * 0.25f);
+        for (auto& e : enemies) {
+            const Vec3 toE = e.pos - eye;
+            const float proj = Vec3::dot(toE, dir);
+            if (proj < 0.0f || proj > kLaserRange) continue;
+            const Vec3 closest = eye + dir * proj;
+            if ((e.pos - closest).length() <= e.radius + kLaserWidth) {
+                e.health -= dmg;
+                e.aggression = 1.0f;
+                if (e.aiState == 0 || e.aiState == 1) e.aiState = 2;
+                if (frames % 2 == 0) spawnBurst(e.pos, 2, 0.02f);
+            }
+        }
+    }
+
     // Scia del raggio corrente (per il glow residuo).
     if ((int)laserSegs.size() < MAX_LASER_SEGS) {
         laserSegs.push_back({eye, laserEnd, kLaserWidth, 0.05f});
     }
+}
+
+// ---------------------------------------------------------------------- //
+//  Gameplay AAA: fluidodinamica, nemici, proiettili, combo (§1-§3 del doc)
+
+void GameStateData::updateFluid(double dt) {
+    const float dts = (float)dt;
+    const float t = (float)time;
+
+    // Vento procedurale: somma di sinusoidi multi-scala (proxy stabile e
+    // deterministico del Perlin 3D del piano) — base + raffiche rapide.
+    const Vec3 p = playerPos;
+    const float bx = sinf(p.x * 0.0011f + t * 0.10f) * cosf(p.z * 0.0009f - t * 0.07f);
+    const float bz = cosf(p.x * 0.0008f - t * 0.08f) * sinf(p.z * 0.0012f + t * 0.11f);
+    const float gx = sinf(p.x * 0.013f + t * 1.7f) * cosf(p.y * 0.010f + t * 1.1f);
+    const float gz = cosf(p.z * 0.014f + t * 1.9f) * sinf(p.y * 0.011f - t * 0.9f);
+    const float by = sinf(p.y * 0.0016f + t * 0.05f);
+    const Vec3 wind((bx + 0.4f * gx) * kWindBase, by * kWindBase * 0.25f,
+                    (bz + 0.4f * gz) * kWindBase);
+    fluid.windVelocity = wind;
+
+    // Turbolenza: scia di vortice dietro gli edifici vicini + effetto suolo.
+    float turb = std::exp(-std::max(0.0f, p.y) / 30.0f) * 0.35f;
+    for (const auto& b : buildings) {
+        if (b.damage >= 1.0f) continue;
+        if (p.y > b.size.y + 25.0f) continue;      // sopra la scia del vortice
+        const float dx = p.x - b.pos.x;
+        const float dz = p.z - (b.pos.z + 40.0f);  // scia a valle della traiettoria
+        const float dist = std::sqrt(dx * dx + dz * dz);
+        if (dist < 90.0f && dist > 5.0f)
+            turb += (1.0f - dist / 90.0f) * 0.55f;
+    }
+    fluid.turbulenceLevel = clampf(turb, 0.0f, 1.0f);
+
+    // Il vento perturba dolcemente l'assetto, la turbolenza scuote la camera:
+    // Superman "lotta" contro l'aria (AAA feel, §1 del doc).
+    pitch += wind.y * 0.020f * dts;
+    yaw   += wind.x * 0.012f * dts;
+    if (state == GameState::Flying)
+        shake = std::max(shake, fluid.turbulenceLevel * 0.28f);
+}
+
+void GameStateData::spawnEnemyWave() {
+    if ((int)enemies.size() >= MAX_ENEMIES) return;
+    // Il radar del giocatore (abilità "detection") restringe il raggio in cui
+    // i nemici lo vedono: spawnano oltre quel raggio per dare tempo di reagire.
+    const float detMul = 1.0f - profile.skills.detection * 0.10f;
+    for (int k = 0; k < kEnemyWaveSize && (int)enemies.size() < MAX_ENEMIES; ++k) {
+        Enemy e;
+        e.type = rnd(0.0f, 1.0f) < 0.25f ? EnemyType::Scout : EnemyType::Drone;
+        e.pos = playerPos + playerQuat.forward() * rnd(380.0f, 560.0f)
+              + playerQuat.right() * rnd(-180.0f, 180.0f)
+              + Vec3(0, rnd(20.0f, 90.0f), 0);
+        if (e.pos.y < 25.0f) e.pos.y = 25.0f;
+        e.maxHealth = e.health = e.type == EnemyType::Scout ? kEnemyHPScout : kEnemyHPDrone;
+        e.intelligence = e.type == EnemyType::Scout ? 0.9f : 0.6f;
+        e.fireCooldown = e.type == EnemyType::Scout ? 2.6f : 2.0f;
+        e.detectionRange = 320.0f * detMul;
+        e.attackRange = e.type == EnemyType::Scout ? 200.0f : 150.0f;
+        e.fireTimer = rnd(0.8f, 1.8f);
+        e.phase = rnd(0.0f, TAU);
+        e.aiState = 1;                            // arrivano già in caccia
+        enemies.push_back(e);
+    }
+}
+
+void GameStateData::updateEnemies(double dt) {
+    const float dts = (float)dt;
+
+    // Ondate periodiche solo durante il volo.
+    if (state == GameState::Flying) {
+        enemySpawnTimer -= dts;
+        if (enemySpawnTimer <= 0.0f) {
+            enemySpawnTimer = kEnemySpawnEvery;
+            spawnEnemyWave();
+        }
+    }
+
+    for (auto& e : enemies) {
+        e.stateTimer += dts;
+        const Vec3 toPlayer = playerPos - e.pos;
+        const float dist = toPlayer.length();
+
+        // --- transizioni della macchina a stati AI ---
+        if (e.aiState == 0 && dist < e.detectionRange) e.aiState = 1;
+        if (e.aiState != 0 && dist > e.detectionRange * 1.5f) e.aiState = 0;
+        if (e.aiState == 1 && dist < e.attackRange) e.aiState = 2;
+        if (e.aiState == 2 && dist > e.attackRange * 1.25f) e.aiState = 1;
+        if (e.health < e.maxHealth * 0.3f && e.aiState != 3) e.aiState = 3;
+        if (e.aiState == 3 && e.health > e.maxHealth * 0.7f) e.aiState = 1;
+
+        // --- comportamenti per stato ---
+        if (e.aiState == 0) {              // pattugliamento: cerchi larghi
+            const float ang = e.stateTimer * 0.5f + e.phase;
+            e.targetPos = e.pos + Vec3(sinf(ang) * 60.0f, cosf(ang * 0.7f) * 12.0f,
+                                       cosf(ang) * 60.0f);
+        } else if (e.aiState == 1 || e.aiState == 2) {
+            // Caccia/attacco: predizione della traiettoria del giocatore.
+            const float tInt = std::min(dist / 300.0f, 1.2f);
+            e.targetPos = playerPos + playerQuat.forward() * (speed * tInt * 0.8f);
+            if (e.type == EnemyType::Scout && dist < 70.0f) {
+                // Scout evasivo: mantiene le distanze scappando con deriva laterale.
+                e.targetPos = e.pos - toPlayer.normalized() * 120.0f
+                            + Vec3(sinf(time * 3.0f + e.phase) * 40.0f, 15.0f, 0);
+            } else if (e.aiState == 2 && dist > e.attackRange * 0.6f) {
+                e.targetPos = e.pos + toPlayer.normalized() * 80.0f;   // avvicinati
+            } else if (e.aiState == 2) {
+                // A distanza d'attacco: strafing laterale (più difficile da colpire).
+                const Vec3 side = Vec3::cross(Vec3(0, 1, 0), toPlayer.normalized());
+                e.targetPos = e.pos + side * (sinf(time * 2.0f + e.phase) * 60.0f);
+            }
+            e.aggression = std::min(1.0f, e.aggression + dts * 0.2f);
+        } else {                            // ritirata: via dal giocatore e cura
+            e.targetPos = e.pos - toPlayer.normalized() * 250.0f;
+            e.health = std::min(e.maxHealth, e.health + dts * 0.08f);
+        }
+
+        // --- movimento: steering smorzato verso il target ---
+        const float cruise = e.type == EnemyType::Scout ? kEnemySpeedScout : kEnemySpeedDrone;
+        const Vec3 desired = (e.targetPos - e.pos).normalized()
+                           * (cruise * (0.55f + 0.45f * e.intelligence));
+        e.vel = e.vel * 0.92f + desired * 0.08f;
+        e.pos = e.pos + e.vel * dts;
+        if (e.pos.y < 12.0f) e.pos.y = 12.0f;          // mai sotto i tetti bassi
+        e.yaw = std::atan2(-e.vel.x, -e.vel.z);
+
+        // --- fuoco: solo in volo, in attacco e a distanza utile ---
+        if (state == GameState::Flying && e.aiState == 2 && dist < e.attackRange) {
+            e.fireTimer -= dts;
+            if (e.fireTimer <= 0.0f) {
+                e.fireTimer = e.fireCooldown / std::max(0.3f, e.intelligence);
+                if ((int)projectiles.size() < MAX_PROJECTILES) {
+                    Projectile pr;
+                    pr.pos = e.pos;
+                    // Mira anticipata: spara dove sarà Superman, non dov'è.
+                    const float tFly = dist / kEnemyBulletSpeed;
+                    const Vec3 aim = playerPos + playerQuat.forward() * (speed * tFly * 0.85f);
+                    pr.vel = (aim - e.pos).normalized() * kEnemyBulletSpeed;
+                    pr.life = pr.maxLife = kEnemyBulletLife;
+                    pr.damage = kEnemyDamage;
+                    projectiles.push_back(pr);
+                }
+            }
+        }
+
+        // Troppo indietro o troppo avanti: si perde di vista (despawn silenzioso).
+        if (e.pos.z > playerPos.z + 450.0f || e.pos.z < playerPos.z - 900.0f)
+            e.health = -100.0f;
+    }
+
+    // Rimozione: chi è stato ucciso esplode e paga la combo; il resto sparisce.
+    for (auto it = enemies.begin(); it != enemies.end();) {
+        if (it->health > 0.0f) { ++it; continue; }
+        if (it->health > -99.0f) {
+            spawnBurst(it->pos, 30, 0.02f);
+            profile.enemiesDefeated++;
+            addComboAction(1000);              // kill bonus (§3 del doc)
+            shake = std::max(shake, 0.2f);
+        }
+        it = enemies.erase(it);
+    }
+}
+
+void GameStateData::updateProjectiles(double dt) {
+    const float dts = (float)dt;
+    for (auto& pr : projectiles) {
+        pr.pos = pr.pos + pr.vel * dts;
+        pr.life -= dts;
+        // Collisione sfera-giocatore: i proiettili nemici fanno davvero male.
+        if (state == GameState::Flying && pr.life > 0.0f &&
+            (pr.pos - playerPos).length() < pr.radius + kPlayerR) {
+            pr.life = 0;
+            damagePlayer(pr.damage);
+            spawnBurst(pr.pos, 8, 0.02f);
+        }
+    }
+    projectiles.erase(std::remove_if(projectiles.begin(), projectiles.end(),
+        [](const Projectile& pr) { return pr.life <= 0.0f; }),
+        projectiles.end());
+}
+
+void GameStateData::damagePlayer(float amount) {
+    if (hitTimer > 0.0f) return;               // breve invulnerabilità tra i colpi
+    const float mul = 1.0f - profile.skills.durability * 0.12f;
+    health -= amount * mul;
+    hitTimer = 0.35f;
+    shake = std::max(shake, 0.4f);
+    if (health <= 0.0f) {
+        health = 0.0f;
+        state = GameState::Crashed;
+        crashTimer = 0;
+        spawnBurst(playerPos, 70, 0.05f);
+    }
+}
+
+void GameStateData::addComboAction(int baseScore) {
+    combo.addAction();
+    const int gained = (int)(baseScore * combo.multiplier);
+    score += gained;
+    profile.totalScore += gained;
+    profile.comboBest = std::max(profile.comboBest, combo.combo);
+}
+
+bool GameStateData::upgradeSkill(int skill) {
+    if (profile.skillPoints <= 0 || skill < 0 || skill > 4) return false;
+    const float before = profile.skills.level(skill);
+    profile.skills.upgrade(skill);
+    if (profile.skills.level(skill) == before) return false;   // già al massimo
+    profile.skillPoints--;
+    return true;
 }
 
 // ---------------------------------------------------------------------- //
@@ -573,6 +832,13 @@ void GameStateData::reset(int best) {
     laserHeat = 0; laserTimer = 0;
     laserEnd = Vec3();
     laserSegs.clear();
+    // I nemici esistono solo in volo: la carriera (profile) sopravvive al reset.
+    enemies.clear();
+    projectiles.clear();
+    enemySpawnTimer = 3.0f;
+    health = 1.0f;
+    hitTimer = 0;
+    combo = ComboState();
     buildings.clear();
     rings.clear();
     particles.clear();
