@@ -17,6 +17,7 @@ int main() {
         float r = 0.3f * std::sin(t * 1.7);
         fly_set_stick(p, y, r);
         fly_set_boost((std::fmod(t, 9.0) > 6.0) ? 1 : 0);
+        fly_set_laser((std::fmod(t, 7.0) > 5.0) ? 1 : 0);
     };
 
     const double dt = 1.0 / 120.0;          // fixed timestep 120 Hz
@@ -41,10 +42,17 @@ int main() {
 
     int b = fly_building_count();
     int state = fly_state();
+    int destroyed = 0;
+    for (int i = 0; i < b; ++i) {
+        FlyVec3 pos, size; float hue;
+        fly_building((int32_t)i, &pos, &size, &hue);
+        if (size.y <= 0.0f) ++destroyed;
+    }
     printf("Stato finale    : %d (0=Menu 1=Flying 2=Crashed)\n", state);
     printf("Punteggio       : %d (best %d), anelli: %d\n",
            fly_score(), fly_best(), fly_rings());
-    printf("Edifici attivi  : %d\n", b);
+    printf("Edifici attivi  : %d (distrutti dal laser: %d)\n", b, destroyed);
+    printf("Calore laser    : %.2f\n", fly_laser_heat());
     printf("Particelle      : %d\n", fly_particle_count());
     printf("Tempo simulato  : %.0f s  (%lld tick 120Hz)\n", duration, ticks);
     printf("Wall time       : %.1f ms  ->  %.2f us/tick\n", wallMs,

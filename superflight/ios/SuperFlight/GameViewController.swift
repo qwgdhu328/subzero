@@ -63,6 +63,7 @@ final class GameViewController: UIViewController {
         hud.onRestart = { [weak self] in
             fly_reset(Int32(self?.renderer.bestScore ?? 0))
         }
+        hud.onLaser = { on in fly_set_laser(on ? 1 : 0) }
         view.addSubview(hud)
 
         // Motore C++

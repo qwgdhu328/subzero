@@ -11,6 +11,7 @@ namespace fly {
 
 constexpr int MAX_BUILDINGS = 380;
 constexpr int MAX_RINGS = 40;
+constexpr int MAX_LASER_SEGS = 48;   // scie residue dei raggi oculari
 constexpr int CITY_GRID = 8;          // 8x8 blocchi città
 constexpr float BLOCK = 120.0f;       // metri per blocco città
 constexpr float DESPAWN_BEHIND = 200.0f;
@@ -25,6 +26,7 @@ struct Building {
     Vec3 pos;         // base al suolo (y = 0)
     Vec3 size;        // metà-larghezza, altezza, metà-profondità (x, y, z)
     float hue;        // 0..1 per la tinta delle finestre
+    float damage = 0.0f; // danni accumulati dai raggi oculari (1 = distrutto)
 };
 
 struct Ring {
@@ -70,6 +72,21 @@ struct GameStateData {
     float inputRoll = 0;
     bool  inputBoost = false;
 
+    // --- raggi oculari (laser) ---
+    bool  laserActive = false;       // raffica in corso
+    float laserHeat = 0.0f;          // 0..1, 1 = surriscaldato
+    bool  laserOverheat = false;     // blocco fino a raffreddamento
+    float laserTimer = 0.0f;         // durata raffica corrente
+    Vec3  laserEnd{0, 0, 0};         // punto d'impatto corrente
+    bool  laserHit = false;          // ha colpito qualcosa in questo frame
+
+    struct LaserSegment {
+        Vec3 a, b;    // estremi world
+        float width;
+        float life;   // secondi rimasti
+    };
+    std::vector<LaserSegment> laserSegs;
+
     // --- mondo ---
     std::vector<Building> buildings;
     std::vector<Ring> rings;
@@ -90,6 +107,7 @@ struct GameStateData {
     void spawnBurst(const Vec3& pos, int n, float hue);
     void recycleWorld();
     bool checkCollisions();
+    void updateLaser(double dt);
     void updateParticles(double dt);
     Vec3 camPos() const;
     Quat camQuat() const;

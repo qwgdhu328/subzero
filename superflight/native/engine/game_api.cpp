@@ -45,6 +45,10 @@ void fly_set_boost(int32_t on) {
     if (g) g->inputBoost = on != 0;
 }
 
+void fly_set_laser(int32_t on) {
+    if (g) g->laserActive = on != 0;
+}
+
 int32_t fly_state(void)    { return g ? (int32_t)g->state : 0; }
 int32_t fly_score(void)    { return g ? g->score : 0; }
 int32_t fly_best(void)     { return g ? g->bestScore : 0; }
@@ -54,6 +58,9 @@ float   fly_boost(void)    { return g ? g->boostFuel : 0; }
 float   fly_altitude(void) { return g ? g->altitude : 0; }
 float   fly_shake(void)    { return g ? g->shake : 0; }
 double  fly_time(void)     { return g ? g->time : 0; }
+float   fly_laser_heat(void)   { return g ? g->laserHeat : 0; }
+int32_t fly_laser_active(void) { return g && g->laserActive && !g->laserOverheat ? 1 : 0; }
+int32_t fly_laser_hit(void)    { return g && g->laserHit ? 1 : 0; }
 
 FlyVec3 fly_player_pos(void) { return g ? v3(g->playerPos) : FlyVec3{0, 60, 0}; }
 
@@ -108,3 +115,27 @@ void fly_particle(int32_t i, FlyVec3* pos, float* size, float* life01,
     if (life01) *life01 = p.life / p.maxLife;
     if (hue) *hue = p.hue;
 }
+
+void fly_laser(FlyVec3* eye, FlyVec3* end, int32_t* active, float* heat) {
+    if (!g) return;
+    if (eye) *eye = v3(g->playerPos + g->playerQuat.up() * 0.75f
+                     + g->playerQuat.forward() * 0.50f);
+    if (end) *end = v3(g->laserEnd);
+    if (active) *active = fly_laser_active();
+    if (heat) *heat = g->laserHeat;
+}
+
+int32_t fly_laser_seg_count(void) {
+    return g ? (int32_t)g->laserSegs.size() : 0;
+}
+
+void fly_laser_seg(int32_t i, FlyVec3* a, FlyVec3* b, float* width,
+                   float* life01) {
+    if (!g || i < 0 || i >= (int32_t)g->laserSegs.size()) return;
+    const auto& s = g->laserSegs[i];
+    if (a) *a = v3(s.a);
+    if (b) *b = v3(s.b);
+    if (width) *width = s.width;
+    if (life01) *life01 = s.life / 0.05f;
+}
+

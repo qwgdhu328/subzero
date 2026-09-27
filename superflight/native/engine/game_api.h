@@ -18,6 +18,7 @@ void  fly_update(double dt, int32_t screen_w, int32_t screen_h);
 // Input (-1..1)
 void  fly_set_stick(float pitch, float yaw, float roll);
 void  fly_set_boost(int32_t on);
+void  fly_set_laser(int32_t on);           // raffica di raggi oculari
 
 // Lettura stato
 int32_t fly_state(void);                // 0=Menu 1=Flying 2=Crashed
@@ -29,6 +30,9 @@ float   fly_boost(void);                // 0..1
 float   fly_altitude(void);
 float   fly_shake(void);
 double  fly_time(void);
+float   fly_laser_heat(void);              // 0..1 (1 = surriscaldato)
+int32_t fly_laser_active(void);            // raffica in corso (1/0)
+int32_t fly_laser_hit(void);               // il raggio colpisce qualcosa (1/0)
 
 // Posizioni per il renderer
 FlyVec3 fly_player_pos(void);
@@ -45,6 +49,12 @@ void    fly_ring(int32_t i, FlyVec3* pos, FlyVec3* quat, float* radius,
 int32_t fly_particle_count(void);
 void    fly_particle(int32_t i, FlyVec3* pos, float* size, float* life01,
                      float* hue);
+
+// Raggi oculari (per il renderer)
+void    fly_laser(FlyVec3* eye, FlyVec3* end, int32_t* active, float* heat);
+int32_t fly_laser_seg_count(void);
+void    fly_laser_seg(int32_t i, FlyVec3* a, FlyVec3* b, float* width,
+                      float* life01);
 
 #ifdef __cplusplus
 }

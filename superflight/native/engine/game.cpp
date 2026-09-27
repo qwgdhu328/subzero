@@ -23,6 +23,13 @@ static constexpr float kPlayerR      = 2.2f;    // raggio collisione giocatore
 static constexpr float kCamDist      = 13.0f;
 static constexpr float kCamHeight    = 4.5f;
 static constexpr float kGravityCrash = 55.0f;
+// Raggi oculari
+static constexpr float kLaserRange   = 450.0f;  // portata del raggio
+static constexpr float kLaserWidth   = 0.55f;   // spessore visivo
+static constexpr float kLaserHeatUp  = 0.55f;   // riscaldamento per secondo
+static constexpr float kLaserCoolDn  = 0.35f;   // raffreddamento per secondo
+static constexpr float kLaserHeatCap = 0.85f;   // soglia di surriscaldamento
+static constexpr float kLaserDPS     = 1.35f;   // danno/sec agli edifici
 
 // RNG deterministico (stessa città per stessa seed → riproducibile).
 static std::mt19937& rng() {
@@ -50,6 +57,10 @@ void GameStateData::reset(int best) {
     playerQuat = Quat();
     inputPitch = inputYaw = inputRoll = 0;
     inputBoost = false;
+    laserActive = laserOverheat = laserHit = false;
+    laserHeat = 0; laserTimer = 0;
+    laserEnd = Vec3();
+    laserSegs.clear();
     buildings.clear();
     rings.clear();
     particles.clear();
@@ -135,8 +146,10 @@ void GameStateData::recycleWorld() {
 
 void GameStateData::update(double dt, int32_t, int32_t) {
     time += dt;
-    if (state == GameState::Flying) updateFlying(dt);
-    else if (state == GameState::Crashed) updateCrashed(dt);
+    if (state == GameState::Flying) {
+        updateFlying(dt);
+        updateLaser(dt);
+    } else if (state == GameState::Crashed) updateCrashed(dt);
     updateParticles(dt);
     shake = std::max(0.0f, shake - (float)dt * 1.6f);
     ++frames;
@@ -210,14 +223,114 @@ void GameStateData::updateFlying(double dt) {
 }
 
 bool GameStateData::checkCollisions() {
-    // AABB giocatore vs edifici (con raggio).
+    // AABB giocatore vs edifici (con raggio); ignora gli edifici distrutti.
     for (const auto& b : buildings) {
-        float dx = std::abs(playerPos.x - b.pos.x) - (b.size.x + kPlayerR);
-        float dz = std::abs(playerPos.z - b.pos.z) - (b.size.z + kPlayerR);
+        if (b.damage >= 1.0f) continue;
+        float dx = std::abs(playerPos.x - b.pos.x) - (b.size.x * (1.0f - b.damage * 0.5f) + kPlayerR);
+        float dzz = std::abs(playerPos.z - b.pos.z) - (b.size.z * (1.0f - b.damage * 0.5f) + kPlayerR);
         float dy = playerPos.y - (b.pos.y + b.size.y);
-        if (dx < 0 && dz < 0 && dy < 0) return true;
+        if (dx < 0 && dzz < 0 && dy < 0) return true;
     }
     return false;
+}
+
+// ---------------------------------------------------------------------- //
+//  Raggi oculari (laser)
+// ---------------------------------------------------------------------- //
+
+void GameStateData::updateLaser(double dt) {
+    const float dts = (float)dt;
+    laserTimer += dts;
+
+    // Fuoco ammesso solo se non surriscaldato.
+    const bool firing = laserActive && !laserOverheat;
+
+    // Termica.
+    if (firing) {
+        laserHeat += kLaserHeatUp * dts;
+        if (laserHeat >= kLaserHeatCap) {
+            laserHeat = 1.0f;
+            laserOverheat = true;
+        }
+    } else {
+        laserHeat -= kLaserCoolDn * dts;
+        if (laserHeat <= 0.0f) {
+            laserHeat = 0.0f;
+            laserOverheat = false;   // completamente raffreddato: di nuovo operativo
+        }
+    }
+
+    // Scie residue: decadimento.
+    for (auto& s : laserSegs) s.life -= dts;
+    laserSegs.erase(std::remove_if(laserSegs.begin(), laserSegs.end(),
+        [](const LaserSegment& s) { return s.life <= 0; }), laserSegs.end());
+
+    if (!firing) {
+        laserHit = false;
+        return;
+    }
+
+    // Origine: gli occhi (davanti-alto, coerenti con il modello 3D).
+    const Vec3 eye = playerPos + playerQuat.up() * 0.75f
+                   + playerQuat.forward() * 0.50f;
+    const Vec3 dir = playerQuat.forward();
+
+    // Raycast AABB: slab test sull'intero intervallo del raggio.
+    float bestT = kLaserRange;
+    int bestIdx = -1;
+    for (int i = 0; i < (int)buildings.size(); ++i) {
+        const Building& b = buildings[i];
+        if (b.damage >= 1.0f) continue;
+        const float tol = kLaserWidth;
+        float tmin = 0.0f, tmax = bestT;
+        bool miss = false;
+        const float* o = &eye.x;
+        const float* d = &dir.x;
+        const float* c = &b.pos.x;
+        const float* h = &b.size.x;
+        for (int a = 0; a < 3; ++a) {
+            const float lo = c[a] - h[a] - tol;
+            const float hi = c[a] + h[a] + tol;
+            if (std::abs(d[a]) < 1e-6f) {
+                if (o[a] < lo || o[a] > hi) { miss = true; break; }
+            } else {
+                float t1 = (lo - o[a]) / d[a];
+                float t2 = (hi - o[a]) / d[a];
+                if (t1 > t2) std::swap(t1, t2);
+                tmin = std::max(tmin, t1);
+                tmax = std::min(tmax, t2);
+                if (tmin > tmax) { miss = true; break; }
+            }
+        }
+        if (!miss) { bestT = tmin; bestIdx = i; }
+        if (bestT <= 0.0f) { bestIdx = -1; break; }
+    }
+
+    laserHit = bestIdx >= 0;
+    laserEnd = eye + dir * bestT;
+
+    // Danno all'edificio colpito.
+    if (bestIdx >= 0) {
+        Building& b = buildings[bestIdx];
+        b.damage += kLaserDPS * dts;
+        // Poi, la città non ripara: il danno è permanente finché il chunk non
+        // viene riciclato, ed è questo che rende il laser "reale".
+        if (b.damage >= 1.0f) {
+            b.damage = 1.0f;
+            score += 25;
+            spawnBurst(laserEnd, 55, 0.02f);   // esplosione arancio
+            shake = std::max(shake, 0.35f);
+        } else if (frames % 3 == 0) {
+            spawnBurst(laserEnd, 2, 0.02f);    // scintille d'impatto
+        } else if (frames % 4 == 0) {
+            spawnBurst(laserEnd, 1, 0.02f);
+        }
+    }
+
+    // Scia del raggio corrente (per il glow residuo).
+    if ((int)laserSegs.size() < MAX_LASER_SEGS) {
+        laserSegs.push_back({eye, laserEnd, kLaserWidth, 0.05f});
+    }
 }
 
 // ---------------------------------------------------------------------- //
@@ -254,21 +367,21 @@ Vec3 GameStateData::camPos() const {
     return playerPos - q.forward() * kCamDist + Vec3(0, kCamHeight, 0);
 }
 
+// Smoothing camera condiviso (un solo giocatore → static va bene).
+static float gCamYaw = 0, gCamPitch = 0;
+
 Quat GameStateData::camQuat() const {
     // Camera smorzata: segue yaw/pitch con un ritardo morbido.
-    // NB: static qui funziona perché esiste un solo giocatore.
-    static float sYaw = 0, sPitch = 0;
-    sYaw += (yaw - sYaw) * 0.18f;
-    sPitch += (pitch - sPitch) * 0.18f;
-    return Quat::fromAxisAngle({0, 1, 0}, sYaw)
-         * Quat::fromAxisAngle({1, 0, 0}, sPitch);
+    gCamYaw += (yaw - gCamYaw) * 0.18f;
+    gCamPitch += (pitch - gCamPitch) * 0.18f;
+    return Quat::fromAxisAngle({0, 1, 0}, gCamYaw)
+         * Quat::fromAxisAngle({1, 0, 0}, gCamPitch);
 }
 
 void GameStateData::camReset() const {
-    // Riporta la camera smorzata sull'orientamento attuale (usato nel reset).
-    // Trucco: porta gli statici ai valori correnti con un passo forte.
-    // (implementato via prima chiamata dopo reset: sYaw/pitch vengono
-    //  riallineati istante per istante dal gioco)
+    // Riallinea subito la camera all'orientamento corrente (usato nel reset).
+    gCamYaw = yaw;
+    gCamPitch = pitch;
 }
 
 } // namespace fly
