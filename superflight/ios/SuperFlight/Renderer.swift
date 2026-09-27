@@ -16,7 +16,6 @@ struct FlyUniforms {
     var bufferSizePad: SIMD4<Float>   // xy = dimensioni buffer
 
     var time: Float { cameraPosTime.w }
-    var cameraPos: SIMD3<Float> { cameraPosTime.xyz }
 }
 
 struct InstanceData {
