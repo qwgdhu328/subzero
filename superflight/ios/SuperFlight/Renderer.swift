@@ -137,17 +137,17 @@ final class Renderer: NSObject, MTKViewDelegate {
         // Cielo in base alla qualità e alla quota (Modulo 10 semplificato):
         // sopra ~2600 m il cielo scurisce verso il blu spazio; il fog negli shader resta basso.
         let alt = fly_altitude()
-        let spaceT = min(1.0, max(0.0, (alt - 400.0) / 2200.0))
-        var skyR = 0.36, skyG = 0.52, skyB = 0.88
+        let spaceT: Float = min(1.0, max(0.0, (alt - 400.0) / 2200.0))
+        var skyR: Float = 0.36, skyG: Float = 0.52, skyB: Float = 0.88
         switch GameSettings.shared.quality {
         case .media: skyR = 0.42; skyG = 0.60; skyB = 0.90
         case .lite:  skyR = 0.55; skyG = 0.68; skyB = 0.92
         case .alta:  break
         }
         // verso lo spazio: scurisce e vira al blu profondo
-        let r = skyR * (1 - spaceT * 0.85)
-        let g = skyG * (1 - spaceT * 0.72)
-        let b = skyB * (1 - spaceT * 0.45) + 0.03 * spaceT
+        let r: Float = skyR * (1 - spaceT * 0.85)
+        let g: Float = skyG * (1 - spaceT * 0.72)
+        let b: Float = skyB * (1 - spaceT * 0.45) + 0.03 * spaceT
         rpd.colorAttachments[0].clearColor = MTLClearColor(red: Double(r), green: Double(g), blue: Double(b), alpha: 1)
 
         enc.setVertexBuffer(uniformBuffer(), offset: 0, index: 1)
