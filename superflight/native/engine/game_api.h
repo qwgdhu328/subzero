@@ -36,6 +36,7 @@ double  fly_time(void);
 float   fly_laser_heat(void);              // 0..1 (1 = surriscaldato)
 int32_t fly_laser_active(void);            // raffica in corso (1/0)
 int32_t fly_laser_hit(void);               // il raggio colpisce qualcosa (1/0)
+int32_t fly_on_ground(void);               // a piedi e a terra (per pose/animazioni)
 
 // Posizioni per il renderer
 FlyVec3 fly_player_pos(void);
@@ -58,6 +59,11 @@ void    fly_laser(FlyVec3* eye, FlyVec3* end, int32_t* active, float* heat);
 int32_t fly_laser_seg_count(void);
 void    fly_laser_seg(int32_t i, FlyVec3* a, FlyVec3* b, float* width,
                       float* life01);
+
+// Pedoni NPC (per il renderer)
+int32_t fly_npc_count(void);
+void    fly_npc(int32_t i, FlyVec3* pos, float* yaw, float* phase,
+                int32_t* flee, float* tint);
 
 #ifdef __cplusplus
 }

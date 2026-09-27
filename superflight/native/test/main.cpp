@@ -37,6 +37,23 @@ int main() {
     if (fly_state() != 3) { printf("FALLITO: atterraggio non torna a Walking\n"); return 1; }
     printf("OK menu/salto/volo/atterraggio\n");
 
+    // Test NPC: devono esistere e scappare quando il laser spara vicino.
+    fly_start_game();
+    for (int i = 0; i < 30; ++i) fly_update(1.0/120.0, 1170, 2532);
+    int npcCount = fly_npc_count();
+    if (npcCount < 5) { printf("FALLITO: NPC insufficienti (%d)\n", npcCount); return 1; }
+    fly_set_laser(1);
+    for (int i = 0; i < 120; ++i) fly_update(1.0/120.0, 1170, 2532);   // 1 s di raffica
+    int fleeing = 0;
+    for (int i = 0; i < npcCount; ++i) {
+        FlyVec3 pos; float yaw, phase, tint; int32_t flee;
+        fly_npc((int32_t)i, &pos, &yaw, &phase, &flee, &tint);
+        if (flee) ++fleeing;
+    }
+    fly_set_laser(0);
+    printf("NPC: %d, in fuga col laser: %d\n", npcCount, fleeing);
+    if (fleeing == 0) { printf("FALLITO: nessun NPC scappa dal laser\n"); return 1; }
+
     const double dt = 1.0 / 120.0;          // fixed timestep 120 Hz
     const double duration = 180.0;          // simula 3 minuti di gioco
     int resets = 0;

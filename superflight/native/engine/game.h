@@ -12,6 +12,7 @@ namespace fly {
 constexpr int MAX_BUILDINGS = 380;
 constexpr int MAX_RINGS = 40;
 constexpr int MAX_LASER_SEGS = 48;   // scie residue dei raggi oculari
+constexpr int MAX_NPCS = 40;         // pedoni simulati
 constexpr int CITY_GRID = 8;          // 8x8 blocchi città
 constexpr float BLOCK = 120.0f;       // metri per blocco città
 constexpr float DESPAWN_BEHIND = 200.0f;
@@ -45,6 +46,19 @@ struct Particle {
     float maxLife;
     float size;
     float hue;
+};
+
+// Pedone NPC: cammina per le strade, scappa se un raggio gli passa vicino.
+struct Npc {
+    Vec3 pos;         // piedi
+    float yaw;        // direzione di cammino
+    float speed;      // m/s attuali
+    float walkSpeed;
+    float runSpeed;
+    float phase;      // fase animazione camminata
+    int flee;         // 0 = normale, 1 = in fuga
+    float fleeTimer;  // secondi rimasti di fuga
+    float bodyTint;   // variante colori abiti 0..1
 };
 
 struct GameStateData {
@@ -97,6 +111,7 @@ struct GameStateData {
     std::vector<Building> buildings;
     std::vector<Ring> rings;
     std::vector<Particle> particles;
+    std::vector<Npc> npcs;
     std::vector<std::pair<Vec3, Vec3>> chunks; // (min, max) per collisioni rapide
     float nextSpawnZ = -400.0f;
 
@@ -116,6 +131,8 @@ struct GameStateData {
     void spawnChunk();
     void spawnRing(const Vec3& pos);
     void spawnBurst(const Vec3& pos, int n, float hue);
+    void spawnNpcs();
+    void updateNpcs(double dt);
     void recycleWorld();
     bool checkCollisions();
     void updateLaser(double dt);

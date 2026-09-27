@@ -65,6 +65,7 @@ double  fly_time(void)     { return g ? g->time : 0; }
 float   fly_laser_heat(void)   { return g ? g->laserHeat : 0; }
 int32_t fly_laser_active(void) { return g && g->laserActive && !g->laserOverheat ? 1 : 0; }
 int32_t fly_laser_hit(void)    { return g && g->laserHit ? 1 : 0; }
+int32_t fly_on_ground(void)    { return g && g->state == GameState::Walking && g->onGround ? 1 : 0; }
 
 FlyVec3 fly_player_pos(void) { return g ? v3(g->playerPos) : FlyVec3{0, 60, 0}; }
 
@@ -127,6 +128,19 @@ void fly_laser(FlyVec3* eye, FlyVec3* end, int32_t* active, float* heat) {
     if (end) *end = v3(g->laserEnd);
     if (active) *active = fly_laser_active();
     if (heat) *heat = g->laserHeat;
+}
+
+int32_t fly_npc_count(void) { return g ? (int32_t)g->npcs.size() : 0; }
+
+void fly_npc(int32_t i, FlyVec3* pos, float* yaw, float* phase,
+             int32_t* flee, float* tint) {
+    if (!g || i < 0 || i >= (int32_t)g->npcs.size()) return;
+    const Npc& n = g->npcs[i];
+    if (pos) *pos = v3(n.pos);
+    if (yaw) *yaw = n.yaw;
+    if (phase) *phase = n.phase;
+    if (flee) *flee = n.flee;
+    if (tint) *tint = n.bodyTint;
 }
 
 int32_t fly_laser_seg_count(void) {

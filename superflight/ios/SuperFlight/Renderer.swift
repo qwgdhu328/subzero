@@ -1,5 +1,5 @@
-// Renderer.swift — rendering 3D Metal: Superman animato, città, laser oculari,
-// anelli, particelle. Il personaggio è costruito a runtime (vertici wrapper).
+// Renderer.swift — rendering 3D Metal: Superman con mesh articolate, mantello
+// animato, NPC pedoni, città con strade/nuvole/cielo, raggi oculari.
 
 import MetalKit
 import simd
@@ -20,23 +20,30 @@ final class Renderer: NSObject, MTKViewDelegate {
 
     let device: MTLDevice
     let commandQueue: MTLCommandQueue
-    var pipelineCity: MTLRenderPipelineState!
-    var pipelineGlow: MTLRenderPipelineState!
+    var pipelineCity: MTLRenderPipelineState!    // cubi istanziati (edifici/terra)
+    var pipelineMesh: MTLRenderPipelineState!    // mesh personaggi
+    var pipelineCape: MTLRenderPipelineState!    // mantello animato
+    var pipelineCloud: MTLRenderPipelineState!   // nuvole
+    var pipelineGlow: MTLRenderPipelineState!    // anelli/laser/particelle
     var depthState: MTLDepthStencilState!
     var noDepthState: MTLDepthStencilState!
 
     var bestScore = 0
 
-    // Buffer istanze (riusati, mai riallocati se non serve)
+    // Buffer istanze
     private var solidInstances: MTLBuffer?
     private var glowInstances: MTLBuffer?
-    private var solidCapacity = 512
+    private var solidCapacity = 1024
     private var glowCapacity = 256
+    private var cloudInstances: [InstanceData] = []
+    private var cloudBuffer: MTLBuffer?
 
-    // Mesh del personaggio: 8 vertici → 6 facce quads → 24 vertici/36 indici
-    private var heroMesh: (verts: [Float], tris: [UInt16]) = ([], [])
-    private var heroVertexBuffer: MTLBuffer?
-    private var heroIndexBuffer: MTLBuffer?
+    // Mesh generate a runtime
+    private var sphereVB: MTLBuffer!; private var sphereIB: MTLBuffer!; private var sphereICount = 0
+    private var capsuleVB: MTLBuffer!; private var capsuleIB: MTLBuffer!; private var capsuleICount = 0
+    private var capeVB: MTLBuffer!
+    private static let capeQuadCount = 16
+    private var capeIndices: [UInt16] = []
 
     private var uniforms = FlyUniforms(
         viewProj: matrix_identity_float4x4, cameraPos: .zero, time: 0)
@@ -53,50 +60,58 @@ final class Renderer: NSObject, MTKViewDelegate {
         glowInstances = device.makeBuffer(
             length: glowCapacity * MemoryLayout<InstanceData>.stride,
             options: .storageModeShared)
-        buildHeroMesh()
+        buildMeshes()
+        buildClouds()
     }
+
+    // ------------------------------------------------------------ //
+    //  Pipeline
 
     private func buildPipelines(library: MTLLibrary?, view: MTKView) {
         guard let lib = library else {
             fatalError("Metal library non trovata: controlla Shaders.metal nel target")
         }
-        let vsFn = lib.makeFunction(name: "vertexMain")!
-        let fsFn = lib.makeFunction(name: "fragmentMain")!
-        let glowFn = lib.makeFunction(name: "glowFragment")!
+        let vsCube = lib.makeFunction(name: "vertexMain")!
+        let vsMesh = lib.makeFunction(name: "meshVertex")!
+        let vsCape = lib.makeFunction(name: "capeVertex")!
+        let fsCity = lib.makeFunction(name: "fragmentMain")!
+        let fsFab  = lib.makeFunction(name: "fabricFragment")!
+        let fsCloud = lib.makeFunction(name: "cloudFragment")!
+        let fsGlow = lib.makeFunction(name: "glowFragment")!
 
-        let d = MTLRenderPipelineDescriptor()
-        d.vertexFunction = vsFn
-        d.fragmentFunction = fsFn
-        d.colorAttachments[0].pixelFormat = view.colorPixelFormat
-        d.colorAttachments[0].isBlendingEnabled = true
-        d.colorAttachments[0].sourceRGBBlendFactor = .sourceAlpha
-        d.colorAttachments[0].destinationRGBBlendFactor = .oneMinusSourceAlpha
-        d.colorAttachments[0].rgbBlendOperation = .add
-        d.colorAttachments[0].alphaBlendOperation = .add
-        d.colorAttachments[0].sourceAlphaBlendFactor = .one
-        d.colorAttachments[0].destinationAlphaBlendFactor = .oneMinusSourceAlpha
-        d.depthAttachmentPixelFormat = view.depthStencilPixelFormat
-        pipelineCity = try! device.makeRenderPipelineState(descriptor: d)
+        func makePipe(_ vs: MTLFunction, _ fs: MTLFunction,
+                      additive: Bool, depthFormat: MTLPixelFormat) -> MTLRenderPipelineState {
+            let d = MTLRenderPipelineDescriptor()
+            d.vertexFunction = vs
+            d.fragmentFunction = fs
+            d.colorAttachments[0].pixelFormat = view.colorPixelFormat
+            d.colorAttachments[0].isBlendingEnabled = true
+            d.colorAttachments[0].rgbBlendOperation = .add
+            d.colorAttachments[0].alphaBlendOperation = .add
+            if additive {
+                d.colorAttachments[0].sourceRGBBlendFactor = .one
+                d.colorAttachments[0].destinationRGBBlendFactor = .oneMinusSourceAlpha
+            } else {
+                d.colorAttachments[0].sourceRGBBlendFactor = .sourceAlpha
+                d.colorAttachments[0].destinationRGBBlendFactor = .oneMinusSourceAlpha
+            }
+            d.colorAttachments[0].sourceAlphaBlendFactor = .one
+            d.colorAttachments[0].destinationAlphaBlendFactor = .oneMinusSourceAlpha
+            d.depthAttachmentPixelFormat = depthFormat
+            return (try? device.makeRenderPipelineState(descriptor: d))!
+        }
 
-        let d2 = MTLRenderPipelineDescriptor()
-        d2.vertexFunction = vsFn
-        d2.fragmentFunction = glowFn
-        d2.colorAttachments[0].pixelFormat = view.colorPixelFormat
-        d2.colorAttachments[0].isBlendingEnabled = true
-        d2.colorAttachments[0].rgbBlendOperation = .add
-        d2.colorAttachments[0].alphaBlendOperation = .add
-        d2.colorAttachments[0].sourceRGBBlendFactor = .one
-        d2.colorAttachments[0].destinationRGBBlendFactor = .oneMinusSourceAlpha
-        d2.colorAttachments[0].sourceAlphaBlendFactor = .one
-        d2.colorAttachments[0].destinationAlphaBlendFactor = .oneMinusSourceAlpha
-        d2.depthAttachmentPixelFormat = view.depthStencilPixelFormat
-        pipelineGlow = try! device.makeRenderPipelineState(descriptor: d2)
+        let df = view.depthStencilPixelFormat
+        pipelineCity = makePipe(vsCube, fsCity, additive: false, depthFormat: df)
+        pipelineMesh = makePipe(vsMesh, fsFab, additive: false, depthFormat: df)
+        pipelineCape = makePipe(vsCape, fsFab, additive: false, depthFormat: df)
+        pipelineCloud = makePipe(vsCube, fsCloud, additive: false, depthFormat: df)
+        pipelineGlow = makePipe(vsCube, fsGlow, additive: true, depthFormat: df)
 
         let dsd = MTLDepthStencilDescriptor()
         dsd.depthCompareFunction = .less
         dsd.isDepthWriteEnabled = true
         depthState = device.makeDepthStencilState(descriptor: dsd)!
-
         let dsd2 = MTLDepthStencilDescriptor()
         dsd2.depthCompareFunction = .less
         dsd2.isDepthWriteEnabled = false
@@ -106,12 +121,9 @@ final class Renderer: NSObject, MTKViewDelegate {
     func mtkView(_ view: MTKView, drawableSizeWillChange size: CGSize) {}
 
     func draw(in view: MTKView) {
-        // 1) motore C++: update a timestep fisso
         fly_update(1.0 / Double(view.preferredFramesPerSecond),
                    Int32(view.drawableSize.width),
                    Int32(view.drawableSize.height))
-
-        // punteggio best per il restart
         bestScore = max(bestScore, Int(fly_best()))
 
         guard let drawable = view.currentDrawable,
@@ -122,16 +134,19 @@ final class Renderer: NSObject, MTKViewDelegate {
         let aspect = Float(view.drawableSize.width / max(1.0, view.drawableSize.height))
         uniforms = makeUniforms(aspect: aspect)
 
-        // Cielo: clear color tramonto
-        rpd.colorAttachments[0].clearColor = MTLClearColor(red: 0.42, green: 0.58, blue: 0.86, alpha: 1)
+        // Cielo: azzurro profondo verso l'orizzonte (nebbia coordinata nello shader)
+        rpd.colorAttachments[0].clearColor = MTLClearColor(red: 0.30, green: 0.55, blue: 0.92, alpha: 1)
+
+        enc.setVertexBuffer(uniformBuffer(), offset: 0, index: 1)
+        enc.setCullMode(.none)
 
         enc.setRenderPipelineState(pipelineCity)
         enc.setDepthStencilState(depthState)
-        enc.setCullMode(.none)
-        enc.setVertexBuffer(uniformBuffer(), offset: 0, index: 1)
-
+        drawGround(enc: enc)
         drawCity(enc: enc)
+        drawClouds(enc: enc)
         drawHero(enc: enc)
+        drawNpcs(enc: enc)
         drawRings(enc: enc)
         drawLaser(enc: enc)
         drawParticles(enc: enc)
@@ -160,15 +175,13 @@ final class Renderer: NSObject, MTKViewDelegate {
         let cp = fly_cam_pos()
         let cq = fly_cam_quat()
         let w2 = sqrtf(max(0, 1 - cq.x*cq.x - cq.y*cq.y - cq.z*cq.z))
-
         var camPos = SIMD3<Float>(cp.x, cp.y, cp.z)
         let sh = fly_shake()
         if sh > 0 {
             let t = Float(fly_time()) * 60.0
             camPos += SIMD3<Float>(sin(t*1.1), cos(t*1.7), sin(t*1.3)) * sh * 0.8
         }
-
-        let proj = MathUtil.perspective(fovY: 1.22, aspect: aspect, zNear: 0.5, zFar: 1600)
+        let proj = MathUtil.perspective(fovY: 1.22, aspect: aspect, zNear: 0.5, zFar: 2200)
         let view = MathUtil.lookFrom(eye: camPos, quat: SIMD4<Float>(cq.x, cq.y, cq.z, w2))
         return FlyUniforms(viewProj: proj * view, cameraPos: camPos, time: Float(fly_time()))
     }
@@ -183,7 +196,118 @@ final class Renderer: NSObject, MTKViewDelegate {
     }
 
     // ------------------------------------------------------------ //
-    //  Edifici (con danni da laser veicolati in color.a)
+    //  Mesh procedurali (sfere, capsule) — niente più cubi per i personaggi
+
+    private func makeSphere(rings: Int, segments: Int) -> (v: [Float], i: [UInt16]) {
+        var v: [Float] = []
+        var idx: [UInt16] = []
+        for r in 0...rings {
+            let phi = Float.pi * Float(r) / Float(rings)
+            for s in 0..<segments {
+                let theta = Float.pi * 2.0 * Float(s) / Float(segments)
+                let x = sin(phi) * cos(theta), y = cos(phi), z = sin(phi) * sin(theta)
+                v.append(contentsOf: [x, y, z, x, y, z])   // pos + normal
+            }
+        }
+        for r in 0..<rings {
+            for s in 0..<segments {
+                let a = UInt16(r * segments + s)
+                let b = UInt16(r * segments + (s + 1) % segments)
+                let c = UInt16((r + 1) * segments + s)
+                let d = UInt16((r + 1) * segments + (s + 1) % segments)
+                idx.append(contentsOf: [a, c, b, b, c, d])
+            }
+        }
+        return (v, idx)
+    }
+
+    private func makeCapsule(segments: Int, rings: Int) -> (v: [Float], i: [UInt16]) {
+        // Capsula lungo Y: emisfero sup (y 2→1), cilindro (y 1→-1), emisfero inf (y -1→-2).
+        var v: [Float] = []
+        var idx: [UInt16] = []
+        let rows = rings * 2 + 2
+        for r in 0...rows {
+            let t = Float(r) / Float(rows)          // 0..1
+            let phi: Float
+            let y: Float
+            if t < 0.25 {
+                phi = t / 0.25 * (Float.pi / 2)
+                y = cos(phi) + 1                    // 2 → 1
+            } else if t > 0.75 {
+                phi = (t - 0.75) / 0.25 * (Float.pi / 2) + Float.pi / 2
+                y = cos(phi) - 1                    // -1 → -2
+            } else {
+                phi = Float.pi / 2
+                y = 1 - (t - 0.25) / 0.5 * 2        // 1 → -1
+            }
+            for s in 0..<segments {
+                let theta = Float.pi * 2.0 * Float(s) / Float(segments)
+                let x = sin(phi) * cos(theta), z = sin(phi) * sin(theta)
+                v.append(contentsOf: [x, y, z, x, y, z])
+            }
+        }
+        for r in 0..<rows {
+            for s in 0..<segments {
+                let a = UInt16(r * segments + s)
+                let b = UInt16(r * segments + (s + 1) % segments)
+                let c = UInt16((r + 1) * segments + s)
+                let d = UInt16((r + 1) * segments + (s + 1) % segments)
+                idx.append(contentsOf: [a, c, b, b, c, d])
+            }
+        }
+        return (v, idx)
+    }
+
+    private func buildMeshes() {
+        let sph = makeSphere(rings: 10, segments: 14)
+        sphereICount = sph.i.count
+        sphereVB = device.makeBuffer(bytes: sph.v, length: sph.v.count * 4, options: .storageModeShared)
+        sphereIB = device.makeBuffer(bytes: sph.i, length: sph.i.count * 2, options: .storageModeShared)
+
+        let cap = makeCapsule(segments: 10, rings: 4)
+        capsuleICount = cap.i.count
+        capsuleVB = device.makeBuffer(bytes: cap.v, length: cap.v.count * 4, options: .storageModeShared)
+        capsuleIB = device.makeBuffer(bytes: cap.i, length: cap.i.count * 2, options: .storageModeShared)
+
+        // Indici del mantello (16 quad × 4 vertici).
+        for q in 0..<Self.capeQuadCount {
+            let b = UInt16(q * 4)
+            capeIndices.append(contentsOf: [b, b+2, b+1, b+1, b+2, b+3])
+        }
+    }
+
+    private func buildClouds() {
+        var list: [InstanceData] = []
+        for i in 0..<22 {
+            let t = Float(i)
+            let ang = t * 2.39996   // golden angle
+            let rad = 260 + (t * 61).truncatingRemainder(dividingBy: 620)
+            let x = cos(ang) * rad, z = sin(ang) * rad - 420
+            let y = 300 + (t * 47).truncatingRemainder(dividingBy: 150)
+            let sx = 60 + (t * 23).truncatingRemainder(dividingBy: 80)
+            let sz = 40 + (t * 31).truncatingRemainder(dividingBy: 60)
+            let m = MathUtil.translate(x: x, y: y, z: z)
+                * MathUtil.scaleNonUniform(sx: sx, sy: 7 + (t*7).truncatingRemainder(dividingBy: 6), sz: sz)
+            list.append(InstanceData(model: m, color: SIMD4<Float>(1, 1, 1, 1)))
+        }
+        cloudInstances = list
+        cloudBuffer = device.makeBuffer(bytes: list,
+                                        length: list.count * MemoryLayout<InstanceData>.stride,
+                                        options: .storageModeShared)
+    }
+
+    // ------------------------------------------------------------ //
+    //  Terra con strada
+
+    private func drawGround(enc: MTLRenderCommandEncoder) {
+        let m = MathUtil.translate(x: 0, y: -1.0, z: 0)
+            * MathUtil.scaleNonUniform(sx: 1600, sy: 1.0, sz: 2600)
+        let inst = InstanceData(model: m, color: SIMD4<Float>(0.30, 0.31, 0.33, 1))
+        enc.setVertexBytes(&inst, length: MemoryLayout<InstanceData>.stride, index: 2)
+        var one = Int32(1)
+        enc.setVertexBytes(&one, length: MemoryLayout<Int32>.stride, index: 3)
+        enc.drawPrimitives(type: .triangle, vertexStart: 0, vertexCount: 36, instanceCount: 1)
+    }
 
     private func drawCity(enc: MTLRenderCommandEncoder) {
         let n = Int(fly_building_count())
@@ -195,57 +319,48 @@ final class Renderer: NSObject, MTKViewDelegate {
         for i in 0..<n {
             var pos = FlyVec3(); var size = FlyVec3(); var hue: Float = 0
             fly_building(Int32(i), &pos, &size, &hue)
-            if size.y <= 0 { continue }        // distrutto dal laser: sparito
+            if size.y <= 0 { continue }        // distrutto dal laser
             let m = MathUtil.translate(x: pos.x, y: pos.y + size.y, z: pos.z)
                 * MathUtil.scaleNonUniform(sx: size.x, sy: size.y, sz: size.z)
-            ptr[count] = InstanceData(model: m,
-                                      color: windowColor(hue: hue, height: size.y))
+            // Variazione realistica dei materiali tra edifici.
+            let v = sin(hue * 61.7) * 0.5 + 0.5
+            let col = SIMD4<Float>(0.46 + 0.14 * v, 0.46 + 0.08 * (1 - v), 0.48 + 0.10 * v, 1)
+            ptr[count] = InstanceData(model: m, color: col)
             count += 1
         }
         guard count > 0 else { return }
-
         enc.setVertexBuffer(buf, offset: 0, index: 2)
         var c = Int32(count)
         enc.setVertexBytes(&c, length: MemoryLayout<Int32>.stride, index: 3)
-        enc.drawPrimitives(type: .triangle, vertexStart: 0, vertexCount: 36,
-                           instanceCount: count)
+        enc.drawPrimitives(type: .triangle, vertexStart: 0, vertexCount: 36, instanceCount: count)
     }
 
-    private func windowColor(hue: Float, height: Float) -> SIMD4<Float> {
-        return SIMD4<Float>(0.52, 0.54, 0.58, 1)   // cemento; le finestre le fa lo shader
+    private func drawClouds(enc: MTLRenderCommandEncoder) {
+        guard let cb = cloudBuffer, !cloudInstances.isEmpty else { return }
+        enc.setRenderPipelineState(pipelineCloud)
+        enc.setDepthStencilState(noDepthState)   // senza scrittura depth: evita pop
+        enc.setVertexBuffer(cb, offset: 0, index: 2)
+        var c = Int32(cloudInstances.count)
+        enc.setVertexBytes(&c, length: MemoryLayout<Int32>.stride, index: 3)
+        enc.drawPrimitives(type: .triangle, vertexStart: 0, vertexCount: 36,
+                           instanceCount: cloudInstances.count)
+        enc.setRenderPipelineState(pipelineCity)
+        enc.setDepthStencilState(depthState)
     }
 
     // ------------------------------------------------------------ //
-    //  SUPERMAN: corpo articolato + mantello animato + pose di volo
+    //  SUPERMAN: corpo articolato con mesh vere + mantello animato
 
-    private func buildHeroMesh() {
-        // 8 vertici del cubo unitario [-1,1]
-        let V: [SIMD3<Float>] = [
-            [-1,-1,-1],[1,-1,-1],[1,1,-1],[-1,1,-1],
-            [-1,-1, 1],[1,-1, 1],[1,1, 1],[-1,1, 1]]
-        let F: [[Int]] = [
-            [0,3,2,1],[4,5,6,7],[0,1,5,4],[2,3,7,6],[1,2,6,5],[0,4,7,3]]
-        var verts: [Float] = []
-        var tris: [UInt16] = []
-        for f in F {
-            let base = UInt16(verts.count / 3)
-            for i in f { verts.append(contentsOf: [V[i].x, V[i].y, V[i].z]) }
-            tris.append(contentsOf: [base, base+1, base+2, base, base+2, base+3])
-        }
-        heroMesh = (verts, tris)
-        heroVertexBuffer = device.makeBuffer(bytes: verts, length: verts.count * 4, options: .storageModeShared)
-        heroIndexBuffer = device.makeBuffer(bytes: tris, length: tris.count * 2, options: .storageModeShared)
-    }
-
-    /// Matrice part: posizione locale (in metri, asse -Z = avanti), rotazione e scala.
-    private func part(_ parent: simd_float4x4, _ pos: SIMD3<Float>,
-                      _ rotY: Float = 0, _ rotX: Float = 0, _ rotZ: Float = 0,
-                      _ scale: SIMD3<Float>) -> simd_float4x4 {
-        parent * MathUtil.translate(x: pos.x, y: pos.y, z: pos.z)
-            * MathUtil.rotateQuat(x: 0, y: sin(rotY/2), z: 0, w: cos(rotY/2))
-            * MathUtil.rotateQuat(x: sin(rotX/2), y: 0, z: 0, w: cos(rotX/2))
-            * MathUtil.rotateQuat(x: 0, y: 0, z: sin(rotZ/2), w: cos(rotZ/2))
-            * MathUtil.scaleNonUniform(sx: scale.x, sy: scale.y, sz: scale.z)
+    private func drawPart(_ enc: MTLRenderCommandEncoder, _ m: simd_float4x4, _ c: SIMD4<Float>,
+                          sphere: Bool) {
+        var inst = InstanceData(model: m, color: c)
+        enc.setVertexBytes(&inst, length: MemoryLayout<InstanceData>.stride, index: 2)
+        let vb = sphere ? sphereVB! : capsuleVB!
+        let ib = sphere ? sphereIB! : capsuleIB!
+        enc.setVertexBuffer(vb, offset: 0, index: 0)
+        enc.drawIndexedPrimitives(type: .triangle, indexCount: sphere ? sphereICount : capsuleICount,
+                                  indexType: .uint16, indexBuffer: ib,
+                                  indexBufferOffset: 0, instanceCount: 1)
     }
 
     private func drawHero(enc: MTLRenderCommandEncoder) {
@@ -256,146 +371,257 @@ final class Renderer: NSObject, MTKViewDelegate {
         let flying = st == 1
         let walking = st == 3
         let crashed = st == 2
+        let onGround = fly_on_ground() == 1
         let t = Float(fly_time())
         let heroQ = simd_quatf(ix: q.x, iy: q.y, iz: q.z, r: qw)
-        let lift: Float = walking ? 0.42 : 0.0      // in piedi i piedi toccano terra
-        let root = MathUtil.translate(x: p.x, y: p.y + lift, z: p.z) * simd_float4x4(heroQ)
-        let boosting = flying && fly_boost() < 0.999 && fly_speed() > 50
+        let root = MathUtil.translate(x: p.x, y: p.y, z: p.z) * simd_float4x4(heroQ)
+        let boosting = flying && fly_speed() > 55
 
-        // Fiamma del boost (glow, disegnata dopo).
-        var boostGlow: (m: simd_float4x4, c: SIMD4<Float>)? = nil
-        if boosting {
-            let fm = root * MathUtil.translate(x: 0, y: -0.1, z: 1.9)
-                * MathUtil.scaleNonUniform(sx: 0.35, sy: 0.35, sz: 2.2 + 0.6 * sin(t*31))
-            boostGlow = (fm, SIMD4<Float>(0.55, 0.8, 1.0, 0.85))
-        }
+        enc.setRenderPipelineState(pipelineMesh)
+        enc.setDepthStencilState(depthState)
 
         var R = root
         if crashed { R = root * MathUtil.rotateQuat(x: 0, y: 0, z: sin(t*3)/2, w: cos(t*3)/2) }
 
-        let torso = part(R, [0, 0.45, 0], 0, 0, 0, [0.62, 0.85, 0.45])
-        let chest = part(R, [0, 0.68, -0.10], 0, 0, 0, [0.70, 0.5, 0.35])
-        let head  = part(R, [0, 1.28, -0.05], 0, 0, 0, [0.42, 0.42, 0.42])
+        let kBlue  = SIMD4<Float>(0.10, 0.22, 0.65, 1)
+        let kBlue2 = SIMD4<Float>(0.08, 0.18, 0.55, 1)
+        let kRed   = SIMD4<Float>(0.78, 0.08, 0.10, 1)
+        let kSkin  = SIMD4<Float>(0.93, 0.75, 0.62, 1)
+        let kGold  = SIMD4<Float>(0.95, 0.78, 0.25, 2)   // alpha 2 = emissivo
 
-        var armL: simd_float4x4; var armR: simd_float4x4
-        var fistL: simd_float4x4; var fistR: simd_float4x4
-        var hipL: simd_float4x4; var hipR: simd_float4x4
-        var footL: simd_float4x4; var footR: simd_float4x4
-
-        if walking {
-            // Camminata: braccia e gambe che si alternano (ciclo passo).
+        // --- pose ---
+        var legSwing: Float = 0
+        var legTuck: Float = 0
+        var armSwing: Float = 0
+        var lean: Float = 0
+        if walking && onGround {
             let moving = fly_speed() > 1.0
-            let a: Float = moving ? sin(t * 10.0) * 0.6 : 0
-            let b: Float = moving ? sin(t * 10.0 + Float.pi) * 0.6 : 0
-            armL = part(R, [ 0.80, 0.50, 0.05], a, 0,  0.06, [0.20, 0.20, 0.95])
-            armR = part(R, [-0.80, 0.50, 0.05], b, 0, -0.06, [0.20, 0.20, 0.95])
-            fistL = part(R, [ 0.80, 0.50, -0.90], 0, 0, 0, [0.26, 0.26, 0.26])
-            fistR = part(R, [-0.80, 0.50, -0.90], 0, 0, 0, [0.26, 0.26, 0.26])
-            hipL = part(R, [ 0.30, -0.30, 0.10], b * 1.1, 0, 0, [0.28, 0.28, 1.15])
-            hipR = part(R, [-0.30, -0.30, 0.10], a * 1.1, 0, 0, [0.28, 0.28, 1.15])
-            footL = part(R, [ 0.30, -0.30 - 0.55 * (1 - cos(b * 1.1)), 0.10 - 1.1 * sin(b * 1.1)], 0, 0, 0, [0.30, 0.18, 0.5])
-            footR = part(R, [-0.30, -0.30 - 0.55 * (1 - cos(a * 1.1)), 0.10 - 1.1 * sin(a * 1.1)], 0, 0, 0, [0.30, 0.18, 0.5])
-        } else {
-            // Volo: braccia in estensione; crash: braccia aperte.
-            let armFwd: Float = flying ? 1.0 : 0.0
-            let armSide: Float = flying ? 0.05 : 0.9
-            armL = part(R, [ 0.78, 0.85, -0.55 - 0.25*armFwd], 0, -1.35*armFwd, -armSide*0.25,
-                         [0.20, 0.20, 1.05 + 0.55*armFwd])
-            armR = part(R, [-0.78, 0.85, -0.55 - 0.25*armFwd], 0, -1.35*armFwd,  armSide*0.25,
-                         [0.20, 0.20, 1.05 + 0.55*armFwd])
-            fistL = part(R, [ 0.78, 0.85, -1.85 - 1.05*armFwd], 0, 0, 0, [0.26, 0.26, 0.26])
-            fistR = part(R, [-0.78, 0.85, -1.85 - 1.05*armFwd], 0, 0, 0, [0.26, 0.26, 0.26])
-            hipL = part(R, [ 0.30, -0.30, 0.10], 0, 0.5*(1-armFwd), 0, [0.28, 0.28, 1.15])
-            hipR = part(R, [-0.30, -0.30, 0.10], 0, 0.5*(1-armFwd), 0, [0.28, 0.28, 1.15])
-            footL = part(R, [ 0.30, -0.32, -1.05], 0, 0, 0, [0.30, 0.18, 0.5])
-            footR = part(R, [-0.30, -0.32, -1.05], 0, 0, 0, [0.30, 0.18, 0.5])
+            let a: Float = moving ? sin(t * 10.0) * 0.65 : 0.06
+            legSwing = a
+            armSwing = -a * 0.8
+            lean = moving ? -0.10 : 0
+        } else if walking && !onGround {
+            legTuck = -0.8; legSwing = -0.3; armSwing = 0.9; lean = -0.15
         }
 
-        // Mantello: 5 segmenti, onda sinusoidale che si propaga dall'alto in basso.
-        var cape: [(m: simd_float4x4, c: SIMD4<Float>)] = []
-        let capeAnchor = part(R, [0, 0.9, 0.42], 0, 0, 0, [1,1,1])
-        let wind = 0.35 + 0.65 * min(1.0, fly_speed() / 60.0)   // a piedi il mantello pende
-        for i in 0..<5 {
-            let s = Float(i)
-            let wave = sin(t * 6.0 - s * 0.9) * (0.12 + 0.16 * s) * wind
-            let flare = 0.62 + 0.14 * s
-            let seg = part(capeAnchor, [0, -0.55 * s - 0.25, 0.25 * s + 0.1 + wave * 0.4],
-                           0, wave * 0.5, 0,
-                           [flare, 0.62, 0.14 + 0.04 * s])
-            cape.append((seg, SIMD4<Float>(0.78, 0.10, 0.12, 1)))
+        let armFwd: Float = flying ? 1.0 : 0.0
+
+        // torso (capsula): altezza 4*sy, centro a 1.0 → spalle a ~1.36
+        let torsoM = R * MathUtil.translate(x: 0, y: 1.00, z: 0)
+            * MathUtil.rotateQuat(x: sin(lean/2), y: 0, z: 0, w: cos(lean/2))
+        drawPart(enc, torsoM * MathUtil.scaleNonUniform(sx: 0.30, sy: 0.18, sz: 0.20), kBlue, sphere: false)
+        // petto/emblema: losanga emissiva (cubo ruotato 45°)
+        let emblem = torsoM * MathUtil.translate(x: 0, y: 0.10, z: -0.20)
+            * MathUtil.rotateQuat(x: 0, y: 0, z: sin(Float.pi/4), w: cos(Float.pi/4))
+            * MathUtil.scaleNonUniform(sx: 0.13, sy: 0.13, sz: 0.05)
+        drawPart(enc, emblem, kGold, sphere: false)
+        // cintura rossa
+        let belt = torsoM * MathUtil.translate(x: 0, y: -0.38, z: 0)
+            * MathUtil.scaleNonUniform(sx: 0.30, sy: 0.05, sz: 0.22)
+        drawPart(enc, belt, kRed, sphere: false)
+
+        // testa: sfera + naso
+        let headM = R * MathUtil.translate(x: 0, y: 1.62 + lean * -0.10, z: 0)
+        drawPart(enc, headM * MathUtil.scaleNonUniform(sx: 0.21, sy: 0.24, sz: 0.22), kSkin, sphere: true)
+        let hair = headM * MathUtil.translate(x: 0, y: 0.10, z: 0.05)
+            * MathUtil.scaleNonUniform(sx: 0.22, sy: 0.12, sz: 0.23)
+        drawPart(enc, hair, SIMD4<Float>(0.14, 0.10, 0.07, 1), sphere: false)
+
+        // braccia: spalla→gomito→pugno (capsule: sy = L/4, centro a -L/2)
+        for s: Float in [-1, 1] {
+            let swing = armSwing * -s
+            let shoulder = R * MathUtil.translate(x: 0.34 * s, y: 1.22, z: 0)
+            let angUA = -0.25 - 1.15 * armFwd + swing
+            let uaRot = MathUtil.rotateQuat(x: sin(angUA/2), y: 0, z: 0, w: cos(angUA/2))
+            let upperLen = 0.30
+            let uaM = shoulder * uaRot * MathUtil.translate(x: 0, y: -upperLen/2, z: 0)
+                * MathUtil.scaleNonUniform(sx: 0.085, sy: upperLen/4, sz: 0.085)
+            drawPart(enc, uaM, kBlue, sphere: false)
+            let elbow = shoulder * uaRot * MathUtil.translate(x: 0, y: -upperLen, z: 0)
+            let angFA = 0.35 + 1.05 * armFwd
+            let faRot = uaRot * MathUtil.rotateQuat(x: sin(angFA/2), y: 0, z: 0, w: cos(angFA/2))
+            let foreLen = 0.28
+            let faM = elbow * faRot * MathUtil.translate(x: 0, y: -foreLen/2, z: 0)
+                * MathUtil.scaleNonUniform(sx: 0.075, sy: foreLen/4, sz: 0.075)
+            drawPart(enc, faM, kSkin, sphere: false)
+            let fistM = elbow * faRot * MathUtil.translate(x: 0, y: -foreLen - 0.05, z: 0)
+                * MathUtil.scaleNonUniform(sx: 0.10, sy: 0.045, sz: 0.10)
+            drawPart(enc, fistM, kSkin, sphere: true)
         }
 
-        // Ombre/base
-        var parts: [(m: simd_float4x4, c: SIMD4<Float>)] = [
-            (torso, SIMD4<Float>(0.16, 0.24, 0.72, 1)),    // tuta blu
-            (chest, SIMD4<Float>(0.85, 0.72, 0.18, 1)),    // petto dorato
-            (head,  SIMD4<Float>(0.96, 0.78, 0.62, 1)),    // pelle
-            (armL,  SIMD4<Float>(0.16, 0.24, 0.72, 1)),
-            (armR,  SIMD4<Float>(0.16, 0.24, 0.72, 1)),
-            (fistL, SIMD4<Float>(0.90, 0.75, 0.60, 1)),
-            (fistR, SIMD4<Float>(0.90, 0.75, 0.60, 1)),
-            (hipL,  SIMD4<Float>(0.14, 0.20, 0.62, 1)),
-            (hipR,  SIMD4<Float>(0.14, 0.20, 0.62, 1)),
-            (footL, SIMD4<Float>(0.80, 0.15, 0.15, 1)),    // stivali rossi
-            (footR, SIMD4<Float>(0.80, 0.15, 0.15, 1)),
-        ]
-
-        // Occhi laser: quando il raggio è attivo, punto luminoso sugli occhi.
-        let laserOn = fly_laser_active() == 1
-        if laserOn {
-            let eyeL = part(R, [ 0.12, 1.32, -0.26], 0, 0, 0, [0.09, 0.09, 0.09])
-            let eyeR = part(R, [-0.12, 1.32, -0.26], 0, 0, 0, [0.09, 0.09, 0.09])
-            parts.append((eyeL, SIMD4<Float>(1.0, 0.25, 0.2, 1)))
-            parts.append((eyeR, SIMD4<Float>(1.0, 0.25, 0.2, 1)))
+        // gambe: anca→ginocchio→stivale (capsule: sy = L/4)
+        for s: Float in [-1, 1] {
+            let swing = legSwing * s + legTuck
+            let hip = R * MathUtil.translate(x: 0.14 * s, y: 0.62, z: 0)
+            let thLen = 0.34
+            let thRot = MathUtil.rotateQuat(x: sin(swing/2), y: 0, z: 0, w: cos(swing/2))
+            let thM = hip * thRot * MathUtil.translate(x: 0, y: -thLen/2, z: 0)
+                * MathUtil.scaleNonUniform(sx: 0.11, sy: thLen/4, sz: 0.11)
+            drawPart(enc, thM, kBlue2, sphere: false)
+            let knee = hip * thRot * MathUtil.translate(x: 0, y: -thLen, z: 0)
+            let shinRot = thRot * MathUtil.rotateQuat(x: sin(max(0, -swing) * 0.6 / 2), y: 0, z: 0, w: cos(max(0, -swing) * 0.6 / 2))
+            let shLen = 0.30
+            let shM = knee * shinRot * MathUtil.translate(x: 0, y: -shLen/2, z: 0)
+                * MathUtil.scaleNonUniform(sx: 0.09, sy: shLen/4, sz: 0.09)
+            drawPart(enc, shM, kBlue2, sphere: false)
+            let footM = knee * shinRot * MathUtil.translate(x: 0, y: -shLen - 0.05, z: -0.05)
+                * MathUtil.scaleNonUniform(sx: 0.10, sy: 0.05, sz: 0.20)
+            drawPart(enc, footM, kRed, sphere: false)
         }
 
-        // Disegna il corpo (pipeline solida, mesh hero).
-        enc.setVertexBuffer(heroVertexBuffer, offset: 0, index: 0)
-        for p in parts {
-            var inst = InstanceData(model: p.m, color: p.c)
+        // --- mantello animato (buffer vertici ricostruito ogni frame) ---
+        drawCape(enc: enc, root: R, t: t, flying: flying,
+                 wind: flying ? (0.55 + 0.45 * min(1, fly_speed() / 80.0)) : 0.25,
+                 lift: flying ? 0.55 : 0.0)
+
+        // fiamma del boost
+        if boosting {
+            var inst = InstanceData(
+                model: R * MathUtil.translate(x: 0, y: 0.55, z: 0.62)
+                    * MathUtil.scaleNonUniform(sx: 0.16, sy: 0.16, sz: 0.9 + 0.25 * sin(t * 31)),
+                color: SIMD4<Float>(0.55, 0.8, 1.0, 0.8))
+            enc.setRenderPipelineState(pipelineGlow)
+            enc.setDepthStencilState(noDepthState)
             enc.setVertexBytes(&inst, length: MemoryLayout<InstanceData>.stride, index: 2)
-            var one = Int32(1)
-            enc.setVertexBytes(&one, length: MemoryLayout<Int32>.stride, index: 3)
-            enc.drawIndexedPrimitives(type: .triangle, indexCount: heroMesh.tris.count,
-                                      indexType: .uint16, indexBuffer: heroIndexBuffer!,
-                                      indexBufferOffset: 0, instanceCount: 1)
+            enc.drawPrimitives(type: .triangle, vertexStart: 0, vertexCount: 36, instanceCount: 1)
+            enc.setRenderPipelineState(pipelineMesh)
+            enc.setDepthStencilState(depthState)
+        }
+    }
+
+    private func drawCape(enc: MTLRenderCommandEncoder, root: simd_float4x4, t: Float,
+                          flying: Bool, wind: Float, lift: Float) {
+        // 16 quad = 5 file × 2 colonne, animati a mano (onde + flare).
+        var verts: [Float] = []
+        var grid: [SIMD3<Float>] = Array(repeating: .zero, count: 5 * 2)
+        for r in 0...4 {
+            let fr = Float(r)
+            let sway = sin(t * 6.0 - fr * 0.9) * (0.05 + 0.13 * fr) * wind
+            let flare = 0.24 + 0.055 * fr + (flying ? 0 : wind * 0.02)
+            let y = 1.30 - (0.34 * fr + fr * fr * 0.02) + lift * fr * 0.35
+            let z = 0.26 + 0.055 * fr + abs(sway) * 0.6
+            for c in 0...1 {
+                let fc = Float(c)
+                let x = (fc - 0.5) * 2.0 * (0.30 + 0.05 * fr)
+                let px = x * (1.0 + 0.18 * fr) + sin(t * 4.3 - fr * 1.3 + fc) * 0.02 * fr * wind
+                let pz = z + sway * (0.4 + 0.6 * fc)
+                let py = y + (flying ? sin(t * 5.0 - fr) * 0.02 * fr : 0)
+                grid[r * 2 + c] = SIMD3<Float>(px, py, pz)
+            }
+        }
+        // Costruisci i 16 quad (pos+normal+uv).
+        var vi = 0
+        for q in 0..<Self.capeQuadCount {
+            let r = q / 2, c = q % 2
+            let a = grid[r * 2 + c]
+            let b = grid[r * 2 + c + 1]
+            let d = grid[(r + 1) * 2 + c]
+            let e = grid[(r + 1) * 2 + c + 1]
+            let n = simd_normalize(simd_cross(b - a, d - a))
+            let u0 = Float(c), u1 = Float(c + 1)
+            let v0 = 1.0 - Float(r) / 4.0, v1 = 1.0 - Float(r + 1) / 4.0
+            func push(_ p: SIMD3<Float>, _ uv: (Float, Float)) {
+                verts.append(contentsOf: [p.x, p.y, p.z, n.x, n.y, n.z, uv.0, uv.1])
+                vi += 1
+            }
+            push(a, (u0, v0)); push(b, (u1, v0)); push(d, (u0, v1)); push(e, (u1, v1))
+        }
+        _ = vi
+        if capeVB == nil || capeVB.length < verts.count * 4 {
+            capeVB = device.makeBuffer(length: verts.count * 4 * 4, options: .storageModeShared)
+        }
+        capeVB!.contents().copyMemory(from: verts, byteCount: verts.count * 4)
+
+        // Indici statici
+        var idxBuf: MTLBuffer
+        if let b = capeIndexBuffer { idxBuf = b } else {
+            let b = device.makeBuffer(bytes: capeIndices, length: capeIndices.count * 2,
+                                      options: .storageModeShared)!
+            capeIndexBuffer = b
+            idxBuf = b
         }
 
-        // Mantello e glow del boost in pipeline additiva.
-        enc.setRenderPipelineState(pipelineGlow)
-        enc.setDepthStencilState(noDepthState)
-        for c in cape {
-            var inst = InstanceData(model: c.m, color: c.c)
-            enc.setVertexBytes(&inst, length: MemoryLayout<InstanceData>.stride, index: 2)
-            var one = Int32(1)
-            enc.setVertexBytes(&one, length: MemoryLayout<Int32>.stride, index: 3)
-            enc.drawIndexedPrimitives(type: .triangle, indexCount: heroMesh.tris.count,
-                                      indexType: .uint16, indexBuffer: heroIndexBuffer!,
-                                      indexBufferOffset: 0, instanceCount: 1)
-        }
-        if let bg = boostGlow {
-            var inst = InstanceData(model: bg.m, color: bg.c)
-            enc.setVertexBytes(&inst, length: MemoryLayout<InstanceData>.stride, index: 2)
-            var one = Int32(1)
-            enc.setVertexBytes(&one, length: MemoryLayout<Int32>.stride, index: 3)
-            enc.drawIndexedPrimitives(type: .triangle, indexCount: heroMesh.tris.count,
-                                      indexType: .uint16, indexBuffer: heroIndexBuffer!,
-                                      indexBufferOffset: 0, instanceCount: 1)
-        }
-        enc.setRenderPipelineState(pipelineCity)
+        enc.setRenderPipelineState(pipelineCape)
         enc.setDepthStencilState(depthState)
-        // Ripristina il vertex buffer a 0 (le pipeline città lo impostano da sole).
+        enc.setVertexBuffer(capeVB!, offset: 0, index: 0)
+        // Il mantello è definito in spazio root: la matrice modello è root stessa.
+        var model = InstanceData(model: root, color: SIMD4<Float>(0.72, 0.07, 0.09, 1))
+        enc.setVertexBytes(&model, length: MemoryLayout<InstanceData>.stride, index: 2)
+        enc.drawIndexedPrimitives(type: .triangle, indexCount: capeIndices.count,
+                                  indexType: .uint16, indexBuffer: idxBuf,
+                                  indexBufferOffset: 0, instanceCount: 1)
+    }
+    private var capeIndexBuffer: MTLBuffer?
+
+    // ------------------------------------------------------------ //
+    //  NPC pedoni
+
+    private func drawNpcs(enc: MTLRenderCommandEncoder) {
+        let n = Int(fly_npc_count())
+        guard n > 0 else { return }
+        enc.setRenderPipelineState(pipelineMesh)
+        enc.setDepthStencilState(depthState)
+
+        for i in 0..<n {
+            var pos = FlyVec3(); var yaw: Float = 0; var phase: Float = 0
+            var flee: Int32 = 0; var tint: Float = 0
+            fly_npc(Int32(i), &pos, &yaw, &phase, &flee, &tint)
+
+            let cq = simd_quatf(angle: yaw, axis: SIMD3<Float>(0, 1, 0))
+            let R = MathUtil.translate(x: pos.x, y: pos.y, z: pos.z) * simd_float4x4(cq)
+
+            // Colori variati per pedone.
+            let shirt = SIMD4<Float>(0.25 + 0.5 * tint, 0.30 + 0.2 * (1 - tint), 0.55 - 0.3 * tint, 1)
+            let pants = SIMD4<Float>(0.18, 0.19, 0.24, 1)
+            let skin  = SIMD4<Float>(0.90, 0.72, 0.58, 1)
+            let hairC = SIMD4<Float>(0.12 + 0.2 * tint, 0.09, 0.06, 1)
+
+            let s = sin(phase), c2 = cos(phase)
+            let swing: Float = flee == 1 ? s * 0.95 : s * 0.45
+            let armRaise: Float = flee == 1 ? -2.4 : 0   // braccia in su nel panico
+
+            // gambe
+            for g: Float in [-1, 1] {
+                let sw = swing * g
+                let hip = R * MathUtil.translate(x: 0.09 * g, y: 0.46, z: 0)
+                let thRot = MathUtil.rotateQuat(x: sin(sw/2), y: 0, z: 0, w: cos(sw/2))
+                let thM = hip * thRot * MathUtil.translate(x: 0, y: -0.115, z: 0)
+                    * MathUtil.scaleNonUniform(sx: 0.055, sy: 0.055, sz: 0.055)
+                drawPart(enc, thM, pants, sphere: false)
+                let footM = hip * thRot * MathUtil.translate(x: 0, y: -0.26, z: 0)
+                    * MathUtil.scaleNonUniform(sx: 0.05, sy: 0.028, sz: 0.09)
+                drawPart(enc, footM, SIMD4<Float>(0.1, 0.1, 0.12, 1), sphere: false)
+            }
+            // torso
+            let torsoM = R * MathUtil.translate(x: 0, y: 0.72, z: 0)
+                * MathUtil.scaleNonUniform(sx: 0.13, sy: 0.09, sz: 0.09)
+            drawPart(enc, torsoM, shirt, sphere: false)
+            // testa + capelli
+            let headM = R * MathUtil.translate(x: 0, y: 1.02, z: 0)
+            drawPart(enc, headM * MathUtil.scaleNonUniform(sx: 0.10, sy: 0.11, sz: 0.10), skin, sphere: true)
+            let hairM = headM * MathUtil.translate(x: 0, y: 0.05, z: 0.02)
+                * MathUtil.scaleNonUniform(sx: 0.10, sy: 0.05, sz: 0.10)
+            drawPart(enc, hairM, hairC, sphere: false)
+            // braccia
+            for g: Float in [-1, 1] {
+                let sw = -swing * g
+                let sh = R * MathUtil.translate(x: 0.17 * g, y: 0.88, z: 0)
+                let rot = MathUtil.rotateQuat(x: sin((sw + armRaise)/2), y: 0, z: 0, w: cos((sw + armRaise)/2))
+                let am = sh * rot * MathUtil.translate(x: 0, y: -0.12, z: 0)
+                    * MathUtil.scaleNonUniform(sx: 0.045, sy: 0.055, sz: 0.045)
+                drawPart(enc, am, shirt, sphere: false)
+            }
+        }
     }
 
     // ------------------------------------------------------------ //
-    //  Anelli
+    //  Anelli / laser / particelle (glow additivo)
 
     private func drawRings(enc: MTLRenderCommandEncoder) {
         let n = Int(fly_ring_count())
         guard n > 0 else { return }
         let buf = ensure(&glowInstances, capacity: &glowCapacity, needed: n)
         let ptr = buf.contents().bindMemory(to: InstanceData.self, capacity: glowCapacity)
-
         var count = 0
         for i in 0..<n {
             var pos = FlyVec3(); var q = FlyVec3(); var radius: Float = 0
@@ -407,126 +633,98 @@ final class Renderer: NSObject, MTKViewDelegate {
                 * MathUtil.rotateQuat(x: q.x, y: q.y, z: q.z, w: qw)
                 * MathUtil.scaleNonUniform(sx: radius, sy: radius, sz: 1.5)
             let pulse = 0.75 + 0.25 * sin(uniforms.time * 4 + Float(i))
-            ptr[count] = InstanceData(model: m,
-                                      color: SIMD4<Float>(0.3, 0.95, 1.0, 0.9 * pulse))
+            ptr[count] = InstanceData(model: m, color: SIMD4<Float>(0.3, 0.95, 1.0, 0.9 * pulse))
             count += 1
         }
         guard count > 0 else { return }
-
         enc.setRenderPipelineState(pipelineGlow)
         enc.setDepthStencilState(noDepthState)
         enc.setVertexBuffer(buf, offset: 0, index: 2)
         var c = Int32(count)
         enc.setVertexBytes(&c, length: MemoryLayout<Int32>.stride, index: 3)
-        enc.drawPrimitives(type: .triangle, vertexStart: 0, vertexCount: 36,
-                           instanceCount: count)
-        enc.setRenderPipelineState(pipelineCity)
-        enc.setDepthStencilState(depthState)
+        enc.drawPrimitives(type: .triangle, vertexStart: 0, vertexCount: 36, instanceCount: count)
     }
-
-    // ------------------------------------------------------------ //
-    //  Raggi oculari: raggio primario + scie residue
 
     private func drawLaser(enc: MTLRenderCommandEncoder) {
         var count = 0
         var total = 0
         let active = fly_laser_active() == 1
-
         if active {
             var eye = FlyVec3(); var end = FlyVec3(); var heat: Float = 0
             var a: Int32 = 0
             fly_laser(&eye, &end, &a, &heat)
             let flicker = 0.85 + 0.15 * sin(uniforms.time * 90)
-            let m = beamMatrix(from: SIMD3<Float>(eye.x, eye.y, eye.z),
-                               to: SIMD3<Float>(end.x, end.y, end.z),
-                               width: 0.30 + 0.25 * heat)
             let buf = ensure(&glowInstances, capacity: &glowCapacity, needed: 2)
             let ptr = buf.contents().bindMemory(to: InstanceData.self, capacity: glowCapacity)
-            ptr[0] = InstanceData(model: m, color: SIMD4<Float>(1.0, 0.15, 0.1, 0.95 * flicker))
-            // alone esterno
-            let m2 = beamMatrix(from: SIMD3<Float>(eye.x, eye.y, eye.z),
-                                to: SIMD3<Float>(end.x, end.y, end.z),
-                                width: 0.7 + 0.4 * heat)
-            ptr[1] = InstanceData(model: m2, color: SIMD4<Float>(1.0, 0.4, 0.3, 0.35 * flicker))
-            count = 2
-            total = 2
+            ptr[0] = InstanceData(model: beamMatrix(from: SIMD3<Float>(eye.x, eye.y, eye.z),
+                                                     to: SIMD3<Float>(end.x, end.y, end.z),
+                                                     width: 0.30 + 0.25 * heat),
+                                  color: SIMD4<Float>(1.0, 0.15, 0.1, 0.95 * flicker))
+            ptr[1] = InstanceData(model: beamMatrix(from: SIMD3<Float>(eye.x, eye.y, eye.z),
+                                                    to: SIMD3<Float>(end.x, end.y, end.z),
+                                                    width: 0.7 + 0.4 * heat),
+                                  color: SIMD4<Float>(1.0, 0.4, 0.3, 0.35 * flicker))
+            count = 2; total = 2
         }
-
-        // Scie residue.
         let segs = Int(fly_laser_seg_count())
         if segs > 0 {
-            let need = total + segs
-            let buf = ensure(&glowInstances, capacity: &glowCapacity, needed: need)
+            let buf = ensure(&glowInstances, capacity: &glowCapacity, needed: total + segs)
             let ptr = buf.contents().bindMemory(to: InstanceData.self, capacity: glowCapacity)
             for i in 0..<segs {
                 var a = FlyVec3(); var b = FlyVec3(); var w: Float = 0; var life: Float = 0
                 fly_laser_seg(Int32(i), &a, &b, &w, &life)
-                let m = beamMatrix(from: SIMD3<Float>(a.x, a.y, a.z),
-                                   to: SIMD3<Float>(b.x, b.y, b.z), width: w * life)
-                ptr[total + i] = InstanceData(model: m,
-                                              color: SIMD4<Float>(1.0, 0.2, 0.12, 0.35 * life))
+                ptr[total + i] = InstanceData(
+                    model: beamMatrix(from: SIMD3<Float>(a.x, a.y, a.z),
+                                      to: SIMD3<Float>(b.x, b.y, b.z), width: w * life),
+                    color: SIMD4<Float>(1.0, 0.2, 0.12, 0.35 * life))
             }
             count += segs
         }
         guard count > 0 else { return }
-
         enc.setRenderPipelineState(pipelineGlow)
         enc.setDepthStencilState(noDepthState)
         enc.setVertexBuffer(glowInstances, offset: 0, index: 2)
         var c = Int32(count)
         enc.setVertexBytes(&c, length: MemoryLayout<Int32>.stride, index: 3)
-        enc.drawPrimitives(type: .triangle, vertexStart: 0, vertexCount: 36,
-                           instanceCount: count)
-        enc.setRenderPipelineState(pipelineCity)
-        enc.setDepthStencilState(depthState)
+        enc.drawPrimitives(type: .triangle, vertexStart: 0, vertexCount: 36, instanceCount: count)
     }
 
-    /// Matrice di un raggio orientato da `from` a `to` (cubo allungato lungo Z).
     private func beamMatrix(from: SIMD3<Float>, to: SIMD3<Float>, width: Float) -> simd_float4x4 {
         let dir = to - from
         let len = max(0.1, simd_length(dir))
         let d = dir / len
-        // Il forward del cubo è -Z: allineo -Z con d.
         let w = simd_quatf(angle: Float.pi, axis: SIMD3<Float>(0, 1, 0))
         var q = simd_quatf(ix: 0, iy: 0, iz: 0, r: 1)
         if abs(simd_dot(d, SIMD3<Float>(0, 0, -1))) < 0.999 {
             q = simd_quatf(from: SIMD3<Float>(0, 0, -1), to: d)
-        } else {
-            q = w
-        }
+        } else { q = w }
         let mid = (from + to) * 0.5
         return MathUtil.translate(x: mid.x, y: mid.y, z: mid.z)
             * simd_float4x4(q)
             * MathUtil.scaleNonUniform(sx: width, sy: width, sz: len * 0.5)
     }
 
-    // ------------------------------------------------------------ //
-    //  Particelle
-
     private func drawParticles(enc: MTLRenderCommandEncoder) {
         let n = Int(fly_particle_count())
         guard n > 0 else { return }
         let buf = ensure(&glowInstances, capacity: &glowCapacity, needed: n)
         let ptr = buf.contents().bindMemory(to: InstanceData.self, capacity: glowCapacity)
-
         for i in 0..<n {
             var pos = FlyVec3(); var size: Float = 0; var life: Float = 0; var hue: Float = 0
             fly_particle(Int32(i), &pos, &size, &life, &hue)
             let m = MathUtil.translate(x: pos.x, y: pos.y, z: pos.z)
                 * MathUtil.scaleNonUniform(sx: size, sy: size, sz: size)
             let c: SIMD4<Float> = hue < 0.05
-                ? SIMD4<Float>(1.0, 0.35, 0.1, life * 0.9)       // laser/esplosioni
-                : SIMD4<Float>(1.0, 0.75, 0.3, life * 0.85)      // boost/anelli
+                ? SIMD4<Float>(1.0, 0.35, 0.1, life * 0.9)
+                : SIMD4<Float>(1.0, 0.75, 0.3, life * 0.85)
             ptr[i] = InstanceData(model: m, color: c)
         }
-
         enc.setRenderPipelineState(pipelineGlow)
         enc.setDepthStencilState(noDepthState)
         enc.setVertexBuffer(buf, offset: 0, index: 2)
         var count = Int32(n)
         enc.setVertexBytes(&count, length: MemoryLayout<Int32>.stride, index: 3)
-        enc.drawPrimitives(type: .triangle, vertexStart: 0, vertexCount: 36,
-                           instanceCount: n)
+        enc.drawPrimitives(type: .triangle, vertexStart: 0, vertexCount: 36, instanceCount: n)
     }
 }
 

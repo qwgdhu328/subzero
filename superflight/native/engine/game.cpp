@@ -36,6 +36,7 @@ static constexpr float kRunSpeed     = 24.0f;   // corsa (tasto veloce) m/s
 static constexpr float kWalkTurn     = 2.2f;    // rad/s svolta a terra
 static constexpr float kJumpV        = 16.0f;   // velocità iniziale di salto m/s
 static constexpr float kGravityWalk  = 26.0f;   // gravità in modalità a piedi
+static constexpr float kEyeHeightWalk = 1.62f;  // occhi a 1.62 m quando in piedi
 
 // RNG deterministico (stessa città per stessa seed → riproducibile).
 static std::mt19937& rng() {
@@ -106,6 +107,104 @@ void GameStateData::spawnBurst(const Vec3& pos, int n, float hue) {
     }
 }
 
+// ---------------------------------------------------------------------- //
+//  NPC: pedoni che camminano e scappano dai raggi oculari
+// ---------------------------------------------------------------------- //
+
+void GameStateData::spawnNpcs() {
+    // Popola le strade attorno al giocatore; ricrea da zero (pochi, costa poco).
+    npcs.clear();
+    const float block = BLOCK;
+    for (int i = 0; i < MAX_NPCS; ++i) {
+        Npc n;
+        // Strade = corridoio lungo X=0 oppure bordi blocchi.
+        const bool corridor = rnd(0.0f, 1.0f) < 0.5f;
+        const float along = playerPos.z + rnd(-350.0f, 250.0f);
+        if (corridor) {
+            n.pos = Vec3(rnd(-14.0f, 14.0f), 0, along);
+        } else {
+            const float laneX = (std::round(rnd(-3, 3)) * 0.5f + 0.5f) * block;
+            n.pos = Vec3(laneX * (rnd(0, 1) < 0.5f ? 1 : -1) + rnd(-8, 8), 0, along);
+        }
+        n.yaw = rnd(0.0f, TAU);
+        n.walkSpeed = rnd(1.1f, 1.9f);
+        n.runSpeed = rnd(4.5f, 6.5f);
+        n.speed = n.walkSpeed;
+        n.phase = rnd(0.0f, TAU);
+        n.flee = 0;
+        n.fleeTimer = 0;
+        n.bodyTint = rnd(0.0f, 1.0f);
+        npcs.push_back(n);
+    }
+}
+
+void GameStateData::updateNpcs(double dt) {
+    const float dts = (float)dt;
+
+    // Se il laser è attivo, chi è vicino al raggio scappa.
+    if (laserActive && !laserOverheat) {
+        const Vec3 a = playerPos + playerQuat.up() * ((state == GameState::Walking) ? kEyeHeightWalk : 0.75f);
+        const Vec3 d = playerQuat.forward();
+        for (auto& n : npcs) {
+            const Vec3 toN = n.pos - a;
+            const float along = Vec3::dot(toN, d);
+            const float lateral = (toN - d * along).length();
+            if (along > -5.0f && along < 90.0f && lateral < 7.0f && !n.flee) {
+                n.flee = 1;
+                n.fleeTimer = rnd(3.0f, 6.0f);
+            }
+        }
+    }
+
+    for (auto& n : npcs) {
+        if (n.flee > 0) {
+            n.fleeTimer -= dts;
+            if (n.fleeTimer <= 0) n.flee = 0;
+        }
+
+        // Direzione: fuga (via dal giocatore, con panico laterale) o camminata.
+        Vec3 want;
+        if (n.flee) {
+            n.speed = n.runSpeed;
+            want = n.pos - playerPos;
+            want.y = 0;
+            if (want.lengthSq() < 1e-4f) want = Vec3(0, 0, 1);
+            want = want.normalized();
+            const Vec3 side = Vec3::cross(Vec3(0, 1, 0), want);
+            want = (want + side * 0.35f * sinf(time * 7.0f + n.phase)).normalized();
+        } else {
+            n.speed = n.walkSpeed;
+            want = Vec3(sinf(n.yaw), 0, cosf(n.yaw));
+            n.yaw += rnd(-1.0f, 1.0f) * 0.8f * dts;   // svolte casuali dolci
+        }
+
+        // Evita gli edifici: se il passo finisce dentro un AABB, gira.
+        Vec3 next = n.pos + want * (n.speed * dts);
+        bool blocked = false;
+        for (const auto& b : buildings) {
+            if (b.damage >= 1.0f) continue;
+            if (std::abs(next.x - b.pos.x) < b.size.x + 1.2f &&
+                std::abs(next.z - b.pos.z) < b.size.z + 1.2f) {
+                blocked = true;
+                break;
+            }
+        }
+        if (blocked) {
+            n.yaw += 7.0f * dts;   // svolta ampia e riprova al prossimo tick
+        } else {
+            n.pos = next;
+        }
+
+        n.pos.y = supportHeightAt(n.pos.x, n.pos.z, 2.5f);
+        n.phase += n.speed * 3.2f * dts + dts * 0.5f;
+    }
+
+    // Ricicla gli NPC rimasti troppo indietro.
+    npcs.erase(std::remove_if(npcs.begin(), npcs.end(),
+        [this](const Npc& n) { return n.pos.z > playerPos.z + DESPAWN_BEHIND * 1.5f; }),
+        npcs.end());
+}
+
 void GameStateData::recycleWorld() {
     float pz = playerPos.z;
     buildings.erase(std::remove_if(buildings.begin(), buildings.end(),
@@ -128,6 +227,7 @@ void GameStateData::update(double dt, int32_t, int32_t) {
     } else if (state == GameState::Walking) {
         updateWalking(dt);
     } else if (state == GameState::Crashed) updateCrashed(dt);
+    updateNpcs(dt);
     updateParticles(dt);
     shake = std::max(0.0f, shake - (float)dt * 1.6f);
     ++frames;
@@ -248,8 +348,9 @@ void GameStateData::updateLaser(double dt) {
         return;
     }
 
-    // Origine: gli occhi (davanti-alto, coerenti con il modello 3D).
-    const Vec3 eye = playerPos + playerQuat.up() * 0.75f
+    // Origine: gli occhi (coerenti con il modello 3D; a terra l'origine è ai piedi).
+    const float eyeH = (state == GameState::Walking) ? kEyeHeightWalk : 0.75f;
+    const Vec3 eye = playerPos + playerQuat.up() * eyeH
                    + playerQuat.forward() * 0.50f;
     const Vec3 dir = playerQuat.forward();
 
@@ -392,6 +493,7 @@ void GameStateData::reset(int best) {
     buildings.clear();
     rings.clear();
     particles.clear();
+    npcs.clear();
     chunks.clear();
     nextSpawnZ = -400.0f;
     frames = 0;
@@ -399,6 +501,7 @@ void GameStateData::reset(int best) {
 
     // Prime 4 chunk di città intorno al punto di spawn.
     for (int i = 0; i < 4; ++i) spawnChunk();
+    spawnNpcs();
 }
 
 void GameStateData::startGame() {
@@ -485,6 +588,9 @@ void GameStateData::updateWalking(double dt) {
 
     // Spawn mondo man mano che si esplora.
     while (playerPos.z - 800.0f < nextSpawnZ) spawnChunk();
+
+    // NPC freschi man mano che avanzi.
+    if ((int)npcs.size() < MAX_NPCS / 2) spawnNpcs();
 
     // Muri: semplice pushback orizzontale se finisci dentro un edificio.
     for (const auto& b : buildings) {
