@@ -17,9 +17,10 @@ constexpr float BLOCK = 120.0f;       // metri per blocco città
 constexpr float DESPAWN_BEHIND = 200.0f;
 
 enum class GameState : int32_t {
-    Menu = 0,
-    Flying = 1,
-    Crashed = 2,
+    Menu = 0,        // menu iniziale / game over (camera in orbita sulla città)
+    Flying = 1,      // in volo
+    Crashed = 2,     // crash → poi torna al Menu
+    Walking = 3,     // a terra: cammina, corri, salta
 };
 
 struct Building {
@@ -60,11 +61,16 @@ struct GameStateData {
     float crashTimer = 0.0f;
 
     // --- giocatore ---
-    Vec3 playerPos{0, 60, 0};
+    Vec3 playerPos{0, 60, 0};        // = piedi del personaggio
     Quat playerQuat;
     float pitch = 0;                 // radianti
     float yaw = 0;
     float roll = 0;
+
+    // --- modalità a piedi ---
+    float vy = 0;                    // velocità verticale (salto/caduta)
+    bool onGround = true;
+    bool landing = false;            // discesa in atterraggio dal volo
 
     // --- input (valori normalizzati -1..1) ---
     float inputPitch = 0;
@@ -98,10 +104,15 @@ struct GameStateData {
     double lastFrameMs = 0;
     int frames = 0;
 
-    void reset(int best);
+    void reset(int best);            // reset mondo + stato Menu
+    void startGame();                // "AVVIA PARTITA": spawn a piedi in città
+    void jump();                     // salto (solo a piedi, da terra)
+    void toggleFly();                // decollo (a piedi) / atterraggio (in volo)
     void update(double dt, int32_t screenW, int32_t screenH);
     void updateFlying(double dt);
+    void updateWalking(double dt);
     void updateCrashed(double dt);
+    float supportHeightAt(float x, float z, float maxY) const;  // quota di supporto (tetti/strada)
     void spawnChunk();
     void spawnRing(const Vec3& pos);
     void spawnBurst(const Vec3& pos, int n, float hue);

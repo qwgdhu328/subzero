@@ -252,11 +252,15 @@ final class Renderer: NSObject, MTKViewDelegate {
         let p = fly_player_pos()
         let q = fly_player_quat()
         let qw = sqrtf(max(0, 1 - q.x*q.x - q.y*q.y - q.z*q.z))
-        let flying = Int(fly_state()) == 1
+        let st = Int(fly_state())
+        let flying = st == 1
+        let walking = st == 3
+        let crashed = st == 2
         let t = Float(fly_time())
         let heroQ = simd_quatf(ix: q.x, iy: q.y, iz: q.z, r: qw)
-        let root = MathUtil.translate(x: p.x, y: p.y, z: p.z) * simd_float4x4(heroQ)
-        let boosting = fly_boost() < 0.999 && fly_speed() > 50
+        let lift: Float = walking ? 0.42 : 0.0      // in piedi i piedi toccano terra
+        let root = MathUtil.translate(x: p.x, y: p.y + lift, z: p.z) * simd_float4x4(heroQ)
+        let boosting = flying && fly_boost() < 0.999 && fly_speed() > 50
 
         // Fiamma del boost (glow, disegnata dopo).
         var boostGlow: (m: simd_float4x4, c: SIMD4<Float>)? = nil
@@ -267,32 +271,53 @@ final class Renderer: NSObject, MTKViewDelegate {
         }
 
         var R = root
-        if !flying { R = root * MathUtil.rotateQuat(x: 0, y: 0, z: sin(t*3)/2, w: cos(t*3)/2) }
-
-        // Pose: braccia in avanti (flying) o aperte (crash).
-        let armFwd: Float = flying ? 1.0 : 0.0
-        let armSide: Float = flying ? 0.05 : 0.9
+        if crashed { R = root * MathUtil.rotateQuat(x: 0, y: 0, z: sin(t*3)/2, w: cos(t*3)/2) }
 
         let torso = part(R, [0, 0.45, 0], 0, 0, 0, [0.62, 0.85, 0.45])
         let chest = part(R, [0, 0.68, -0.10], 0, 0, 0, [0.70, 0.5, 0.35])
         let head  = part(R, [0, 1.28, -0.05], 0, 0, 0, [0.42, 0.42, 0.42])
-        let armL  = part(R, [ 0.78, 0.85, -0.55 - 0.25*armFwd], 0, -1.35*armFwd, -armSide*0.25,
+
+        var armL: simd_float4x4; var armR: simd_float4x4
+        var fistL: simd_float4x4; var fistR: simd_float4x4
+        var hipL: simd_float4x4; var hipR: simd_float4x4
+        var footL: simd_float4x4; var footR: simd_float4x4
+
+        if walking {
+            // Camminata: braccia e gambe che si alternano ( ciclo passo ).
+            let moving = fly_speed() > 1.0
+            let a: Float = moving ? sin(t * 8.0) * 0.5 : 0
+            let b: Float = moving ? sin(t * 8.0 + Float.pi) * 0.5 : 0
+            armL = part(R, [ 0.80, 0.50, 0.05], a, 0,  0.06, [0.20, 0.20, 0.95])
+            armR = part(R, [-0.80, 0.50, 0.05], b, 0, -0.06, [0.20, 0.20, 0.95])
+            fistL = part(R, [ 0.80, 0.50 + 0.95 * sin(a), 0.05 - 0.95 * cos(a)], 0, 0, 0, [0.26, 0.26, 0.26])
+            fistR = part(R, [-0.80, 0.50 + 0.95 * sin(b), 0.05 - 0.95 * cos(b)], 0, 0, 0, [0.26, 0.26, 0.26])
+            hipL = part(R, [ 0.30, -0.30, 0.10], b * 1.1, 0, 0, [0.28, 0.28, 1.15])
+            hipR = part(R, [-0.30, -0.30, 0.10], a * 1.1, 0, 0, [0.28, 0.28, 1.15])
+            footL = part(R, [ 0.30, -0.30 + 1.15 * sin(b * 1.1), 0.10 - 1.15 * cos(b * 1.1)], 0, 0, 0, [0.30, 0.18, 0.5])
+            footR = part(R, [-0.30, -0.30 + 1.15 * sin(a * 1.1), 0.10 - 1.15 * cos(a * 1.1)], 0, 0, 0, [0.30, 0.18, 0.5])
+        } else {
+            // Volo: braccia in estensione; crash: braccia aperte.
+            let armFwd: Float = flying ? 1.0 : 0.0
+            let armSide: Float = flying ? 0.05 : 0.9
+            armL = part(R, [ 0.78, 0.85, -0.55 - 0.25*armFwd], 0, -1.35*armFwd, -armSide*0.25,
                          [0.20, 0.20, 1.05 + 0.55*armFwd])
-        let armR  = part(R, [-0.78, 0.85, -0.55 - 0.25*armFwd], 0, -1.35*armFwd,  armSide*0.25,
+            armR = part(R, [-0.78, 0.85, -0.55 - 0.25*armFwd], 0, -1.35*armFwd,  armSide*0.25,
                          [0.20, 0.20, 1.05 + 0.55*armFwd])
-        let fistL = part(R, [ 0.78, 0.85, -1.85 - 1.05*armFwd], 0, 0, 0, [0.26, 0.26, 0.26])
-        let fistR = part(R, [-0.78, 0.85, -1.85 - 1.05*armFwd], 0, 0, 0, [0.26, 0.26, 0.26])
-        let hipL  = part(R, [ 0.30, -0.30, 0.10], 0, 0.5*(1-armFwd), 0, [0.28, 0.28, 1.15])
-        let hipR  = part(R, [-0.30, -0.30, 0.10], 0, 0.5*(1-armFwd), 0, [0.28, 0.28, 1.15])
-        let footL = part(R, [ 0.30, -0.32, -1.05], 0, 0, 0, [0.30, 0.18, 0.5])
-        let footR = part(R, [-0.30, -0.32, -1.05], 0, 0, 0, [0.30, 0.18, 0.5])
+            fistL = part(R, [ 0.78, 0.85, -1.85 - 1.05*armFwd], 0, 0, 0, [0.26, 0.26, 0.26])
+            fistR = part(R, [-0.78, 0.85, -1.85 - 1.05*armFwd], 0, 0, 0, [0.26, 0.26, 0.26])
+            hipL = part(R, [ 0.30, -0.30, 0.10], 0, 0.5*(1-armFwd), 0, [0.28, 0.28, 1.15])
+            hipR = part(R, [-0.30, -0.30, 0.10], 0, 0.5*(1-armFwd), 0, [0.28, 0.28, 1.15])
+            footL = part(R, [ 0.30, -0.32, -1.05], 0, 0, 0, [0.30, 0.18, 0.5])
+            footR = part(R, [-0.30, -0.32, -1.05], 0, 0, 0, [0.30, 0.18, 0.5])
+        }
 
         // Mantello: 5 segmenti, onda sinusoidale che si propaga dall'alto in basso.
         var cape: [(m: simd_float4x4, c: SIMD4<Float>)] = []
         let capeAnchor = part(R, [0, 0.9, 0.42], 0, 0, 0, [1,1,1])
+        let wind = 0.35 + 0.65 * min(1.0, fly_speed() / 60.0)   // a piedi il mantello pende
         for i in 0..<5 {
             let s = Float(i)
-            let wave = sin(t * 6.0 - s * 0.9) * (0.12 + 0.16 * s)
+            let wave = sin(t * 6.0 - s * 0.9) * (0.12 + 0.16 * s) * wind
             let flare = 0.62 + 0.14 * s
             let seg = part(capeAnchor, [0, -0.55 * s - 0.25, 0.25 * s + 0.1 + wave * 0.4],
                            0, wave * 0.5, 0,

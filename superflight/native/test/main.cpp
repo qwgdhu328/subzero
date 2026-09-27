@@ -20,6 +20,23 @@ int main() {
         fly_set_laser((std::fmod(t, 7.0) > 5.0) ? 1 : 0);
     };
 
+    // Test nuovo ciclo di gioco: menu → startGame → camminata/salto/volo.
+    printf("-- ciclo menu/azione --\n");
+    fly_reset(0);
+    if (fly_state() != 0) { printf("FALLITO: stato iniziale non e' Menu\n"); return 1; }
+    fly_start_game();
+    if (fly_state() != 3) { printf("FALLITO: startGame non porta a Walking\n"); return 1; }
+    fly_set_stick(0.0f, 0.0f, 0.0f);   // fermo
+    fly_jump();                        // salto
+    for (int i = 0; i < 30; ++i) fly_update(1.0/120.0, 1170, 2532);
+    fly_jump();                        // secondo salto → decollo
+    for (int i = 0; i < 60; ++i) fly_update(1.0/120.0, 1170, 2532);
+    if (fly_state() != 1) { printf("FALLITO: doppio salto non decolla\n"); return 1; }
+    fly_toggle_fly();                  // atterraggio
+    for (int i = 0; i < 240; ++i) fly_update(1.0/120.0, 1170, 2532);   // 2 s: deve toccare terra
+    if (fly_state() != 3) { printf("FALLITO: atterraggio non torna a Walking\n"); return 1; }
+    printf("OK menu/salto/volo/atterraggio\n");
+
     const double dt = 1.0 / 120.0;          // fixed timestep 120 Hz
     const double duration = 180.0;          // simula 3 minuti di gioco
     int resets = 0;
@@ -35,6 +52,8 @@ int main() {
         if (t > 20.0 && fly_state() != 1) {
             resets++;
             fly_reset(fly_best());
+            fly_start_game();
+            fly_toggle_fly();   // decolla subito per la simulazione di volo
         }
     }
     auto t1 = std::chrono::high_resolution_clock::now();

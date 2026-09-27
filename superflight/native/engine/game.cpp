@@ -30,6 +30,12 @@ static constexpr float kLaserHeatUp  = 0.55f;   // riscaldamento per secondo
 static constexpr float kLaserCoolDn  = 0.35f;   // raffreddamento per secondo
 static constexpr float kLaserHeatCap = 0.85f;   // soglia di surriscaldamento
 static constexpr float kLaserDPS     = 1.35f;   // danno/sec agli edifici
+// Modalità a piedi
+static constexpr float kWalkSpeed    = 9.0f;    // camminata m/s
+static constexpr float kRunSpeed     = 24.0f;   // corsa (tasto veloce) m/s
+static constexpr float kWalkTurn     = 2.2f;    // rad/s svolta a terra
+static constexpr float kJumpV        = 16.0f;   // velocità iniziale di salto m/s
+static constexpr float kGravityWalk  = 26.0f;   // gravità in modalità a piedi
 
 // RNG deterministico (stessa città per stessa seed → riproducibile).
 static std::mt19937& rng() {
@@ -44,36 +50,6 @@ static float rnd(float lo, float hi) {
 // ---------------------------------------------------------------------- //
 //  Reset e spawn
 // ---------------------------------------------------------------------- //
-
-void GameStateData::reset(int best) {
-    state = GameState::Flying;
-    time = 0; score = 0; ringsPassed = 0;
-    bestScore = best;
-    speed = kBaseSpeed;
-    boostFuel = 1.0f;
-    shake = 0; crashTimer = 0;
-    playerPos = Vec3(0, 60, 0);
-    pitch = yaw = roll = 0;
-    playerQuat = Quat();
-    inputPitch = inputYaw = inputRoll = 0;
-    inputBoost = false;
-    laserActive = laserOverheat = laserHit = false;
-    laserHeat = 0; laserTimer = 0;
-    laserEnd = Vec3();
-    laserSegs.clear();
-    buildings.clear();
-    rings.clear();
-    particles.clear();
-    chunks.clear();
-    nextSpawnZ = -400.0f;
-    frames = 0;
-    camReset();
-
-    // Prime 4 chunk di città davanti al giocatore.
-    for (int i = 0; i < 4; ++i) spawnChunk();
-    // Anello tutorial subito davanti.
-    spawnRing(playerPos + playerQuat.forward() * 220.0f);
-}
 
 void GameStateData::spawnChunk() {
     const float grid = CITY_GRID;
@@ -149,6 +125,8 @@ void GameStateData::update(double dt, int32_t, int32_t) {
     if (state == GameState::Flying) {
         updateFlying(dt);
         updateLaser(dt);
+    } else if (state == GameState::Walking) {
+        updateWalking(dt);
     } else if (state == GameState::Crashed) updateCrashed(dt);
     updateParticles(dt);
     shake = std::max(0.0f, shake - (float)dt * 1.6f);
@@ -364,6 +342,12 @@ void GameStateData::updateParticles(double dt) {
 
 Vec3 GameStateData::camPos() const {
     Quat q = camQuat();
+    if (state == GameState::Walking || state == GameState::Menu) {
+        // Camera terza persona più vicina e in basso (menu = vista bassa sulla città).
+        const float d = state == GameState::Menu ? 30.0f : 9.0f;
+        const float h = state == GameState::Menu ? 14.0f : 3.2f;
+        return playerPos - q.forward() * d + Vec3(0, h, 0);
+    }
     return playerPos - q.forward() * kCamDist + Vec3(0, kCamHeight, 0);
 }
 
@@ -382,6 +366,146 @@ void GameStateData::camReset() const {
     // Riallinea subito la camera all'orientamento corrente (usato nel reset).
     gCamYaw = yaw;
     gCamPitch = pitch;
+}
+
+// ---------------------------------------------------------------------- //
+//  Reset, menu e modalità a piedi
+// ---------------------------------------------------------------------- //
+
+void GameStateData::reset(int best) {
+    state = GameState::Menu;              // il menu è il primo stato del gioco
+    time = 0; score = 0; ringsPassed = 0;
+    bestScore = best;
+    speed = 0;
+    boostFuel = 1.0f;
+    shake = 0; crashTimer = 0;
+    playerPos = Vec3(0, kMinAlt, 0);      // in strada, al centro del corridoio
+    pitch = yaw = roll = 0;
+    vy = 0; onGround = true; landing = false;
+    playerQuat = Quat();
+    inputPitch = inputYaw = inputRoll = 0;
+    inputBoost = false;
+    laserActive = laserOverheat = laserHit = false;
+    laserHeat = 0; laserTimer = 0;
+    laserEnd = Vec3();
+    laserSegs.clear();
+    buildings.clear();
+    rings.clear();
+    particles.clear();
+    chunks.clear();
+    nextSpawnZ = -400.0f;
+    frames = 0;
+    camReset();
+
+    // Prime 4 chunk di città intorno al punto di spawn.
+    for (int i = 0; i < 4; ++i) spawnChunk();
+}
+
+void GameStateData::startGame() {
+    // "AVVIA PARTITA": rigenera il mondo e mette Superman in strada.
+    reset(bestScore);
+    state = GameState::Walking;
+    playerPos = Vec3(0, kMinAlt, -30);
+    yaw = 0; pitch = 0; roll = 0;
+    playerQuat = Quat();
+    camReset();
+}
+
+void GameStateData::jump() {
+    if (state != GameState::Walking) return;
+    if (onGround) { vy = kJumpV; onGround = false; }
+    else if (!landing && vy > -30.0f) {            // doppio salto → decollo
+        state = GameState::Flying;
+        vy = 0; speed = kBaseSpeed * 0.45f;
+        pitch = 0.25f;
+        spawnBurst(playerPos, 20, 0.08f);
+    }
+}
+
+void GameStateData::toggleFly() {
+    if (state == GameState::Walking) {
+        state = GameState::Flying;
+        vy = 0; speed = kBaseSpeed * 0.45f;
+        spawnBurst(playerPos, 24, 0.08f);
+    } else if (state == GameState::Flying) {
+        state = GameState::Walking;                // atterraggio: cade con gravità
+        landing = true;
+    }
+}
+
+// Quota della superficie su cui si può stare in piedi (strada, tetti) —
+// la più alta sotto `maxY`.
+float GameStateData::supportHeightAt(float x, float z, float maxY) const {
+    float h = 0.0f;   // strada
+    for (const auto& b : buildings) {
+        if (b.damage >= 1.0f) continue;
+        const float m = 0.6f;                     // mezza larghezza corpo ~ 1.2 m
+        if (std::abs(x - b.pos.x) < b.size.x + m &&
+            std::abs(z - b.pos.z) < b.size.z + m) {
+            const float top = b.pos.y + b.size.y;
+            if (top <= maxY + 0.5f && top > h) h = top;
+        }
+    }
+    return h;
+}
+
+void GameStateData::updateWalking(double dt) {
+    const float dts = (float)std::min(dt, 0.05);
+
+    // Yaw dal joystick; il pitch lo usa la camera per guardare su/giù.
+    yaw   -= inputYaw * kWalkTurn * dts;
+    pitch  = clampf(pitch * (1.0f - 3.0f * dts), -0.4f, 0.4f);
+    roll  = 0;
+    playerQuat = Quat::fromAxisAngle({0, 1, 0}, yaw);
+
+    // Movimento relativo alla visuale (strafe = input pitch invertito).
+    const Vec3 fwd = Vec3(playerQuat.forward().x, 0, playerQuat.forward().z).normalized();
+    const Vec3 strafe = playerQuat.right();
+    const float vMove = -inputPitch * kWalkSpeed;  // su = avanti
+    Vec3 vel = fwd * vMove + strafe * (0.0f);
+
+    // Corsa con boost (veloce anche a piedi).
+    if (inputBoost) vel = fwd * (kRunSpeed);
+    playerPos = playerPos + vel * dts;
+
+    // Gravità e salto.
+    vy -= kGravityWalk * dts;
+    playerPos.y += vy * dts;
+
+    const float ground = supportHeightAt(playerPos.x, playerPos.z, playerPos.y + 2.0f);
+    if (playerPos.y <= ground) {
+        playerPos.y = ground;
+        vy = 0;
+        if (!onGround) spawnBurst(playerPos, 6, 0.08f);   // piccola polvere all'atterraggio
+        onGround = true;
+        landing = false;
+    } else {
+        onGround = false;
+    }
+
+    // Spawn mondo man mano che si esplora.
+    while (playerPos.z - 800.0f < nextSpawnZ) spawnChunk();
+
+    // Muri: semplice pushback orizzontale se finisci dentro un edificio.
+    for (const auto& b : buildings) {
+        if (b.damage >= 1.0f) continue;
+        const float m = 1.0f;
+        const float top = b.pos.y + b.size.y;
+        if (playerPos.y < top - 1.0f &&
+            std::abs(playerPos.x - b.pos.x) < b.size.x + m &&
+            std::abs(playerPos.z - b.pos.z) < b.size.z + m) {
+            // Spingi fuori lungo l'asse di minor penetrazione.
+            const float px = (b.size.x + m) - std::abs(playerPos.x - b.pos.x);
+            const float pz = (b.size.z + m) - std::abs(playerPos.z - b.pos.z);
+            if (px < pz) {
+                playerPos.x += (playerPos.x > b.pos.x ? px : -px);
+            } else {
+                playerPos.z += (playerPos.z > b.pos.z ? pz : -pz);
+            }
+        }
+    }
+
+    if (state == GameState::Walking) updateLaser(dts);
 }
 
 } // namespace fly

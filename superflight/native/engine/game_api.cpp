@@ -49,6 +49,10 @@ void fly_set_laser(int32_t on) {
     if (g) g->laserActive = on != 0;
 }
 
+void fly_jump(void)        { if (g) g->jump(); }
+void fly_toggle_fly(void)  { if (g) g->toggleFly(); }
+void fly_start_game(void)  { if (g) g->startGame(); }
+
 int32_t fly_state(void)    { return g ? (int32_t)g->state : 0; }
 int32_t fly_score(void)    { return g ? g->score : 0; }
 int32_t fly_best(void)     { return g ? g->bestScore : 0; }

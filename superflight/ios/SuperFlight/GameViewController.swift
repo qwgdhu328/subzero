@@ -60,9 +60,9 @@ final class GameViewController: UIViewController {
 
         hud = HUDView(frame: view.bounds)
         hud.autoresizingMask = [.flexibleWidth, .flexibleHeight]
-        hud.onRestart = { [weak self] in
-            fly_reset(Int32(self?.renderer.bestScore ?? 0))
-        }
+        hud.onRestart = { _ = fly_start_game() }     // "AVVIA PARTITA"
+        hud.onJump = { fly_jump() }
+        hud.onFlyToggle = { fly_toggle_fly() }
         hud.onLaser = { on in fly_set_laser(on ? 1 : 0) }
         view.addSubview(hud)
 

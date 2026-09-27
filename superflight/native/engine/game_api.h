@@ -19,9 +19,12 @@ void  fly_update(double dt, int32_t screen_w, int32_t screen_h);
 void  fly_set_stick(float pitch, float yaw, float roll);
 void  fly_set_boost(int32_t on);
 void  fly_set_laser(int32_t on);           // raffica di raggi oculari
+void  fly_jump(void);                      // salto (a piedi)
+void  fly_toggle_fly(void);                // decollo / atterraggio
+void  fly_start_game(void);                // "AVVIA PARTITA" dal menu
 
 // Lettura stato
-int32_t fly_state(void);                // 0=Menu 1=Flying 2=Crashed
+int32_t fly_state(void);                // 0=Menu 1=Flying 2=Crashed 3=Walking
 int32_t fly_score(void);
 int32_t fly_best(void);
 int32_t fly_rings(void);
