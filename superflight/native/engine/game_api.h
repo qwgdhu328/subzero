@@ -22,6 +22,7 @@ void  fly_set_laser(int32_t on);           // raffica di raggi oculari
 void  fly_jump(void);                      // salto (a piedi)
 void  fly_toggle_fly(void);                // decollo / atterraggio
 void  fly_start_game(void);                // "AVVIA PARTITA" dal menu
+void  fly_set_limits(int32_t max_npcs, int32_t max_particles);  // qualità grafica
 
 // Lettura stato
 int32_t fly_state(void);                // 0=Menu 1=Flying 2=Crashed 3=Walking

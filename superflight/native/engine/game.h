@@ -12,7 +12,8 @@ namespace fly {
 constexpr int MAX_BUILDINGS = 380;
 constexpr int MAX_RINGS = 40;
 constexpr int MAX_LASER_SEGS = 48;   // scie residue dei raggi oculari
-constexpr int MAX_NPCS = 40;         // pedoni simulati
+constexpr int MAX_NPCS = 40;         // pedoni simulati (limite da impostazioni)
+constexpr int MAX_PARTICLES = 600;   // limite particelle da impostazioni
 constexpr int CITY_GRID = 8;          // 8x8 blocchi città
 constexpr float BLOCK = 120.0f;       // metri per blocco città
 constexpr float DESPAWN_BEHIND = 200.0f;
@@ -119,10 +120,15 @@ struct GameStateData {
     double lastFrameMs = 0;
     int frames = 0;
 
+    // --- limiti da impostazioni (qualità grafica) ---
+    int npcLimit = MAX_NPCS;
+    int particleLimit = MAX_PARTICLES;
+
     void reset(int best);            // reset mondo + stato Menu
     void startGame();                // "AVVIA PARTITA": spawn a piedi in città
     void jump();                     // salto (solo a piedi, da terra)
     void toggleFly();                // decollo (a piedi) / atterraggio (in volo)
+    void setLimits(int maxNpcs, int maxParticles);
     void update(double dt, int32_t screenW, int32_t screenH);
     void updateFlying(double dt);
     void updateWalking(double dt);

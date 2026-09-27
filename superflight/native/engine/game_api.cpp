@@ -53,6 +53,10 @@ void fly_jump(void)        { if (g) g->jump(); }
 void fly_toggle_fly(void)  { if (g) g->toggleFly(); }
 void fly_start_game(void)  { if (g) g->startGame(); }
 
+void fly_set_limits(int32_t max_npcs, int32_t max_particles) {
+    if (g) g->setLimits(max_npcs, max_particles);
+}
+
 int32_t fly_state(void)    { return g ? (int32_t)g->state : 0; }
 int32_t fly_score(void)    { return g ? g->score : 0; }
 int32_t fly_best(void)     { return g ? g->bestScore : 0; }

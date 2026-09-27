@@ -102,8 +102,9 @@ void GameStateData::spawnBurst(const Vec3& pos, int n, float hue) {
         p.hue = hue;
         particles.push_back(p);
     }
-    if (particles.size() > 600) {
-        particles.erase(particles.begin(), particles.begin() + (particles.size() - 600));
+    if ((int)particles.size() > particleLimit) {
+        const int excess = (int)particles.size() - particleLimit;
+        particles.erase(particles.begin(), particles.begin() + excess);
     }
 }
 
@@ -111,11 +112,17 @@ void GameStateData::spawnBurst(const Vec3& pos, int n, float hue) {
 //  NPC: pedoni che camminano e scappano dai raggi oculari
 // ---------------------------------------------------------------------- //
 
+void GameStateData::setLimits(int maxNpcs, int maxParticles) {
+    npcLimit = maxNpcs > 0 ? std::min(maxNpcs, MAX_NPCS) : 0;
+    particleLimit = maxParticles > 0 ? std::min(maxParticles, MAX_PARTICLES) : 0;
+}
+
 void GameStateData::spawnNpcs() {
-    // Popola le strade attorno al giocatore; ricrea da zero (pochi, costa poco).
+    // Popola le strade attorno al giocatore; rispetta il limite di qualità.
     npcs.clear();
     const float block = BLOCK;
-    for (int i = 0; i < MAX_NPCS; ++i) {
+    const int count = npcLimit;
+    for (int i = 0; i < count; ++i) {
         Npc n;
         // Strade = corridoio lungo X=0 oppure bordi blocchi.
         const bool corridor = rnd(0.0f, 1.0f) < 0.5f;
@@ -199,10 +206,11 @@ void GameStateData::updateNpcs(double dt) {
         n.phase += n.speed * 3.2f * dts + dts * 0.5f;
     }
 
-    // Ricicla gli NPC rimasti troppo indietro.
+    // Ricicla gli NPC rimasti troppo indietro o oltre il limite di qualità.
     npcs.erase(std::remove_if(npcs.begin(), npcs.end(),
         [this](const Npc& n) { return n.pos.z > playerPos.z + DESPAWN_BEHIND * 1.5f; }),
         npcs.end());
+    while ((int)npcs.size() > npcLimit) npcs.pop_back();
 }
 
 void GameStateData::recycleWorld() {
@@ -590,7 +598,7 @@ void GameStateData::updateWalking(double dt) {
     while (playerPos.z - 800.0f < nextSpawnZ) spawnChunk();
 
     // NPC freschi man mano che avanzi.
-    if ((int)npcs.size() < MAX_NPCS / 2) spawnNpcs();
+    if ((int)npcs.size() < npcLimit / 2) spawnNpcs();
 
     // Muri: semplice pushback orizzontale se finisci dentro un edificio.
     for (const auto& b : buildings) {

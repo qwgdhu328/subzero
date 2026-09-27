@@ -14,6 +14,7 @@ final class TouchController: NSObject {
     private var stickTouch: UITouch?
     private var boostTouch: UITouch?
     private let radius: CGFloat = 130
+    var sensitivity: Float = 1.0          // moltiplicatore impostato dalla HUD
 
     override init() {
         super.init()
@@ -32,8 +33,8 @@ final class TouchController: NSObject {
     private func stickValue(_ location: CGPoint) -> (Float, Float) {
         let dx = clampCG((location.x - center.x) / radius)
         let dy = clampCG((location.y - center.y) / radius)
-        // su = salita
-        return (Float(-dy), Float(dx))
+        // su = salita; sensibilità moltiplica la risposta
+        return (Float(-dy) * sensitivity, Float(dx) * sensitivity)
     }
 
     private func updateStick() {

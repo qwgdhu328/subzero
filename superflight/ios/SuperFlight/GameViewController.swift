@@ -50,7 +50,7 @@ final class GameViewController: UIViewController {
         gameView.framebufferOnly = true
         gameView.depthStencilPixelFormat = .depth32Float
         gameView.colorPixelFormat = .bgra8Unorm
-        gameView.preferredFramesPerSecond = 120
+        gameView.preferredFramesPerSecond = GameSettings.shared.fps60 ? 60 : 120
         gameView.isUserInteractionEnabled = true
         gameView.touchDelegate = touch
         touch.attach(to: gameView)      // senza questo il joystick non invia input
@@ -65,6 +65,7 @@ final class GameViewController: UIViewController {
         hud.onJump = { fly_jump() }
         hud.onFlyToggle = { fly_toggle_fly() }
         hud.onLaser = { on in fly_set_laser(on ? 1 : 0) }
+        hud.onSettingsChanged = { [weak self] in self?.applySettings() }
         view.addSubview(hud)
 
         // Motore C++
@@ -78,5 +79,15 @@ final class GameViewController: UIViewController {
         touch.onBoost = { on in
             fly_set_boost(on ? 1 : 0)
         }
+
+        // Impostazioni salvate: limiti qualità + sensibilità + FPS.
+        applySettings()
+    }
+
+    private func applySettings() {
+        let s = GameSettings.shared
+        s.applyLimits()                                  // NPC/particelle al motore
+        touch.sensitivity = s.sensitivity                // joystick
+        gameView.preferredFramesPerSecond = s.fps60 ? 60 : 120
     }
 }

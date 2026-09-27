@@ -134,8 +134,15 @@ final class Renderer: NSObject, MTKViewDelegate {
         let aspect = Float(view.drawableSize.width / max(1.0, view.drawableSize.height))
         uniforms = makeUniforms(aspect: aspect)
 
-        // Cielo: azzurro profondo verso l'orizzonte (nebbia coordinata nello shader)
-        rpd.colorAttachments[0].clearColor = MTLClearColor(red: 0.30, green: 0.55, blue: 0.92, alpha: 1)
+        // Cielo in base alla qualità: Alta = tramonto caldo, Media = pomeriggio, Lite = piatto
+        switch GameSettings.shared.quality {
+        case .alta:
+            rpd.colorAttachments[0].clearColor = MTLClearColor(red: 0.36, green: 0.52, blue: 0.88, alpha: 1)
+        case .media:
+            rpd.colorAttachments[0].clearColor = MTLClearColor(red: 0.42, green: 0.60, blue: 0.90, alpha: 1)
+        case .lite:
+            rpd.colorAttachments[0].clearColor = MTLClearColor(red: 0.55, green: 0.68, blue: 0.92, alpha: 1)
+        }
 
         enc.setVertexBuffer(uniformBuffer(), offset: 0, index: 1)
         enc.setCullMode(.none)
@@ -338,16 +345,41 @@ final class Renderer: NSObject, MTKViewDelegate {
 
     private func drawClouds(enc: MTLRenderCommandEncoder) {
         guard let cb = cloudBuffer, !cloudInstances.isEmpty else { return }
-        enc.setRenderPipelineState(pipelineCloud)
-        enc.setDepthStencilState(noDepthState)   // senza scrittura depth: evita pop
-        enc.setVertexBuffer(cb, offset: 0, index: 2)
-        var c = Int32(cloudInstances.count)
-        enc.setVertexBytes(&c, length: MemoryLayout<Int32>.stride, index: 3)
-        enc.drawPrimitives(type: .triangle, vertexStart: 0, vertexCount: 36,
-                           instanceCount: cloudInstances.count)
+        // Media: una nuvola su due; Lite: niente nuvole.
+        switch GameSettings.shared.quality {
+        case .lite: return
+        case .media:
+            var half = [InstanceData]()
+            for (i, inst) in cloudInstances.enumerated() where i % 2 == 0 { half.append(inst) }
+            if cloudCapacity < half.count {
+                cloudCapacity = half.count * 2
+                cloudDynamicBuffer = device.makeBuffer(length: cloudCapacity * MemoryLayout<InstanceData>.stride,
+                                                       options: .storageModeShared)
+            }
+            if let dyn = cloudDynamicBuffer {
+                dyn.contents().copyMemory(from: half, byteCount: half.count * MemoryLayout<InstanceData>.stride)
+                enc.setRenderPipelineState(pipelineCloud)
+                enc.setDepthStencilState(noDepthState)
+                enc.setVertexBuffer(dyn, offset: 0, index: 2)
+                var c = Int32(half.count)
+                enc.setVertexBytes(&c, length: MemoryLayout<Int32>.stride, index: 3)
+                enc.drawPrimitives(type: .triangle, vertexStart: 0, vertexCount: 36,
+                                   instanceCount: half.count)
+            }
+        case .alta:
+            enc.setRenderPipelineState(pipelineCloud)
+            enc.setDepthStencilState(noDepthState)   // senza scrittura depth: evita pop
+            enc.setVertexBuffer(cb, offset: 0, index: 2)
+            var c = Int32(cloudInstances.count)
+            enc.setVertexBytes(&c, length: MemoryLayout<Int32>.stride, index: 3)
+            enc.drawPrimitives(type: .triangle, vertexStart: 0, vertexCount: 36,
+                               instanceCount: cloudInstances.count)
+        }
         enc.setRenderPipelineState(pipelineCity)
         enc.setDepthStencilState(depthState)
     }
+    private var cloudDynamicBuffer: MTLBuffer?
+    private var cloudCapacity = 0
 
     // ------------------------------------------------------------ //
     //  SUPERMAN: corpo articolato con mesh vere + mantello animato
@@ -710,7 +742,11 @@ final class Renderer: NSObject, MTKViewDelegate {
         guard n > 0 else { return }
         let buf = ensure(&glowInstances, capacity: &glowCapacity, needed: n)
         let ptr = buf.contents().bindMemory(to: InstanceData.self, capacity: glowCapacity)
-        for i in 0..<n {
+        // Qualità Lite: mostra solo metà particelle (il motore ne limita comunque il numero).
+        let stride = GameSettings.shared.quality == .lite ? 2 : 1
+        var count = 0
+        var i = 0
+        while i < n {
             var pos = FlyVec3(); var size: Float = 0; var life: Float = 0; var hue: Float = 0
             fly_particle(Int32(i), &pos, &size, &life, &hue)
             let m = MathUtil.translate(x: pos.x, y: pos.y, z: pos.z)
@@ -718,14 +754,17 @@ final class Renderer: NSObject, MTKViewDelegate {
             let c: SIMD4<Float> = hue < 0.05
                 ? SIMD4<Float>(1.0, 0.35, 0.1, life * 0.9)
                 : SIMD4<Float>(1.0, 0.75, 0.3, life * 0.85)
-            ptr[i] = InstanceData(model: m, color: c)
+            ptr[count] = InstanceData(model: m, color: c)
+            count += 1
+            i += stride
         }
+        guard count > 0 else { return }
         enc.setRenderPipelineState(pipelineGlow)
         enc.setDepthStencilState(noDepthState)
         enc.setVertexBuffer(buf, offset: 0, index: 2)
-        var count = Int32(n)
-        enc.setVertexBytes(&count, length: MemoryLayout<Int32>.stride, index: 3)
-        enc.drawPrimitives(type: .triangle, vertexStart: 0, vertexCount: 36, instanceCount: n)
+        var ic = Int32(count)
+        enc.setVertexBytes(&ic, length: MemoryLayout<Int32>.stride, index: 3)
+        enc.drawPrimitives(type: .triangle, vertexStart: 0, vertexCount: 36, instanceCount: count)
     }
 }
 
