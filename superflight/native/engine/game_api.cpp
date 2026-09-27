@@ -165,6 +165,17 @@ void fly_npc(int32_t i, FlyVec3* pos, float* yaw, float* phase,
 int32_t fly_laser_seg_count(void) {
     return g ? (int32_t)g->laserSegs.size() : 0;
 }
+
+void fly_laser_seg(int32_t i, FlyVec3* a, FlyVec3* b, float* width,
+                   float* life01) {
+    if (!g || i < 0 || i >= (int32_t)g->laserSegs.size()) return;
+    const auto& s = g->laserSegs[i];
+    if (a) *a = v3(s.a);
+    if (b) *b = v3(s.b);
+    if (width) *width = s.width;
+    if (life01) *life01 = s.life / 0.05f;
+}
+
 // ---------------------------------------------------------------- //
 // Gameplay AAA: nemici, proiettili, carriera, fluidodinamica
 
