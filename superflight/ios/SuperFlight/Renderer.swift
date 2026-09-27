@@ -303,7 +303,8 @@ final class Renderer: NSObject, MTKViewDelegate {
         let m = MathUtil.translate(x: 0, y: -1.0, z: 0)
             * MathUtil.scaleNonUniform(sx: 1600, sy: 1.0, sz: 2600)
         let inst = InstanceData(model: m, color: SIMD4<Float>(0.30, 0.31, 0.33, 1))
-        enc.setVertexBytes(&inst, length: MemoryLayout<InstanceData>.stride, index: 2)
+        var instMut = inst
+        enc.setVertexBytes(&instMut, length: MemoryLayout<InstanceData>.stride, index: 2)
         var one = Int32(1)
         enc.setVertexBytes(&one, length: MemoryLayout<Int32>.stride, index: 3)
         enc.drawPrimitives(type: .triangle, vertexStart: 0, vertexCount: 36, instanceCount: 1)
@@ -433,14 +434,14 @@ final class Renderer: NSObject, MTKViewDelegate {
             let shoulder = R * MathUtil.translate(x: 0.34 * s, y: 1.22, z: 0)
             let angUA = -0.25 - 1.15 * armFwd + swing
             let uaRot = MathUtil.rotateQuat(x: sin(angUA/2), y: 0, z: 0, w: cos(angUA/2))
-            let upperLen = 0.30
+            let upperLen: Float = 0.30
             let uaM = shoulder * uaRot * MathUtil.translate(x: 0, y: -upperLen/2, z: 0)
                 * MathUtil.scaleNonUniform(sx: 0.085, sy: upperLen/4, sz: 0.085)
             drawPart(enc, uaM, kBlue, sphere: false)
             let elbow = shoulder * uaRot * MathUtil.translate(x: 0, y: -upperLen, z: 0)
             let angFA = 0.35 + 1.05 * armFwd
             let faRot = uaRot * MathUtil.rotateQuat(x: sin(angFA/2), y: 0, z: 0, w: cos(angFA/2))
-            let foreLen = 0.28
+            let foreLen: Float = 0.28
             let faM = elbow * faRot * MathUtil.translate(x: 0, y: -foreLen/2, z: 0)
                 * MathUtil.scaleNonUniform(sx: 0.075, sy: foreLen/4, sz: 0.075)
             drawPart(enc, faM, kSkin, sphere: false)
@@ -453,14 +454,14 @@ final class Renderer: NSObject, MTKViewDelegate {
         for s: Float in [-1, 1] {
             let swing = legSwing * s + legTuck
             let hip = R * MathUtil.translate(x: 0.14 * s, y: 0.62, z: 0)
-            let thLen = 0.34
+            let thLen: Float = 0.34
             let thRot = MathUtil.rotateQuat(x: sin(swing/2), y: 0, z: 0, w: cos(swing/2))
             let thM = hip * thRot * MathUtil.translate(x: 0, y: -thLen/2, z: 0)
                 * MathUtil.scaleNonUniform(sx: 0.11, sy: thLen/4, sz: 0.11)
             drawPart(enc, thM, kBlue2, sphere: false)
             let knee = hip * thRot * MathUtil.translate(x: 0, y: -thLen, z: 0)
             let shinRot = thRot * MathUtil.rotateQuat(x: sin(max(0, -swing) * 0.6 / 2), y: 0, z: 0, w: cos(max(0, -swing) * 0.6 / 2))
-            let shLen = 0.30
+            let shLen: Float = 0.30
             let shM = knee * shinRot * MathUtil.translate(x: 0, y: -shLen/2, z: 0)
                 * MathUtil.scaleNonUniform(sx: 0.09, sy: shLen/4, sz: 0.09)
             drawPart(enc, shM, kBlue2, sphere: false)
