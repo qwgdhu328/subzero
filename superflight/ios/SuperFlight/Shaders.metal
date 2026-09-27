@@ -16,6 +16,14 @@ struct FlyUniforms {
     float4   bufferSizePad;   // 176: xy = dimensioni buffer
 };
 
+// Uniform delle ombre (W1 del piano AAA): matrice sole, bias e risoluzione
+// della shadow map. Solo float4x4/float4 (allineamento identico a Swift).
+struct ShadowUniforms {
+    float4x4 sunViewProj;      // 0: view-proj ortografica dal sole
+    float4   sunPosRadius;     // 64: xyz = posizione sole, w = raggio area
+    float4   biasResolution;   // 80: x = bias depth, y = risoluzione shadow map
+};
+
 struct InstanceData {
     float4x4 model;
     float4 color;
@@ -86,6 +94,96 @@ static inline float valueNoise2(float2 p) {
 }
 
 // ------------------------------------------------------------ //
+//  Shadow mapping (W1 del piano AAA): campionamento PCF 3×3 della shadow
+//  map renderizzata dal punto di vista del sole.
+
+// Ritorna 1 = pieno sole, 0 = in ombra (PCF 3×3, bordi morbidi).
+float shadowFactor(float3 worldPos, float3 n, texture2d<float> shadowMap,
+                   sampler shadowSamp, constant ShadowUniforms &shadowU) {
+    float4 sc = shadowU.sunViewProj * float4(worldPos, 1.0);
+    float3 coord = sc.xyz / sc.w;
+    coord.y = -coord.y;                    // flip Y: la texture ha origine in alto
+    coord.xy = coord.xy * 0.5 + 0.5;       // NDC → [0,1]
+    coord.z -= shadowU.biasResolution.x;
+    // Fuori dal frustum del sole: nessuna occlusione (bordi dell'area coperta).
+    if (any(coord.xy < 0.0) || any(coord.xy > 1.0) || coord.z > 1.0) { return 1.0; }
+    // Ricevitore che non guarda il sole: in ombra per contatto (controluce).
+    if (dot(n, normalize(shadowU.sunPosRadius.xyz - worldPos)) <= 0.0) { return 0.0; }
+
+    float texel = 1.0 / shadowU.biasResolution.y;
+    float sum = 0.0;
+    for (int y = -1; y <= 1; ++y) {
+        for (int x = -1; x <= 1; ++x) {
+            float2 uv = coord.xy + float2(float(x), float(y)) * texel;
+            float d = shadowMap.sample(shadowSamp, uv).r;
+            sum += (d < coord.z) ? 0.0 : 1.0;
+        }
+    }
+    return sum / 9.0;
+}
+
+// ------------------------------------------------------------ //
+//  PBR Cook-Torrance (W2 del piano AAA): BRDF GGX per edifici e mantello.
+
+constant float kPi = 3.14159265358979323846;
+
+// Fresnel-Schlick: il riflesso cresce a incidencee radente.
+inline float3 fresnelSchlick(float cosTheta, float3 F0) {
+    return F0 + (1.0 - F0) * pow(clamp(1.0 - cosTheta, 0.0, 1.0), 5.0);
+}
+
+// Distribuzione GGX (Trowbridge-Reitz): modello a microfacets.
+inline float distributionGGX(float NdotH, float roughness) {
+    float a = roughness * roughness;
+    float a2 = a * a;
+    float denom = NdotH * NdotH * (a2 - 1.0) + 1.0;
+    denom = kPi * denom * denom;
+    return a2 / max(denom, 0.0001);
+}
+
+// Geometry Smith-Schlick: mascheratura/ombreggiatura dei microfacets.
+inline float geometrySchlickGGX(float NdotV, float roughness) {
+    float r = roughness + 1.0;
+    float k = (r * r) / 8.0;
+    return NdotV / (NdotV * (1.0 - k) + k);
+}
+
+inline float geometrySmith(float NdotV, float NdotL, float roughness) {
+    return geometrySchlickGGX(NdotL, roughness) * geometrySchlickGGX(NdotV, roughness);
+}
+
+// BRDF completa Cook-Torrance: diffuso Lambert + speculare GGX.
+inline float3 cookTorranceBRDF(float3 N, float3 V, float3 L,
+                               float roughness, float metallic, float3 baseColor) {
+    float3 H = normalize(V + L);
+    float NdotV = max(dot(N, V), 0.001);
+    float NdotL = max(dot(N, L), 0.0);
+    float NdotH = max(dot(N, H), 0.0);
+    float HdotV = max(dot(H, V), 0.0);
+
+    float3 F0 = mix(float3(0.04), baseColor, metallic);   // 0.04 dielettrico, albedo metallo
+    float3 F = fresnelSchlick(HdotV, F0);
+    float D = distributionGGX(NdotH, roughness);
+    float G = geometrySmith(NdotV, NdotL, roughness);
+
+    float3 specular = (D * F * G) / (4.0 * NdotV * NdotL + 0.001);
+    float3 kD = (float3(1.0) - F) * (1.0 - metallic);     // i metalli non hanno diffuso
+    return kD * baseColor / kPi + specular;
+}
+
+// Roughness/metallicità procedurali (da PBR_Shaders.metal del piano):
+// il vetro è lucido, il cemento ruvido, le griglie dei tetti metalliche.
+inline void cityMaterial(float3 color, float3 worldPos, float3 n,
+                         thread float &roughness, thread float &metallic) {
+    float gridX = step(0.82, abs(sin(worldPos.x * 0.3)));
+    float gridZ = step(0.82, abs(sin(worldPos.z * 0.3)));
+    metallic = mix(0.0, 0.8, gridX * gridZ * step(0.5, abs(n.y)));
+    float lum = dot(color, float3(0.299, 0.587, 0.114));
+    roughness = lum < 0.3 ? 0.12 : 0.72;                  // finestre lucide / cemento
+    roughness = clamp(roughness + 0.08 * sin(worldPos.x * 0.1) * cos(worldPos.y * 0.1), 0.08, 1.0);
+}
+
+// ------------------------------------------------------------ //
 //  Cielo procedurale: gradiente, sole con alone, stelle in quota
 
 float3 skyColor(float3 dir, float3 sunDir, float altT, float time) {
@@ -140,16 +238,48 @@ vertex VertexOut vertexMain(uint vid [[vertex_id]],
 }
 
 // ------------------------------------------------------------ //
+//  Shadow pass: depth-only dal punto di vista del sole (W1 del piano AAA).
+//  Nessun fragment: si scrive solo la depth della shadow map.
+
+vertex VertexOut vertexShadowDepth(uint vid [[vertex_id]],
+                                   uint iid [[instance_id]],
+                                   constant ShadowUniforms &sh [[buffer(1)]],
+                                   const device InstanceData* instances [[buffer(2)]],
+                                   constant int32_t &count [[buffer(3)]])
+{
+    VertexOut out;
+    uint vi = vid % 36;
+    uint face = vi / 6;
+    float3 lp = cubeVerts[vi];
+    float3 n = cubeNormals[face];
+
+    float4 world = instances[iid].model * float4(lp, 1.0);
+    out.pos = sh.sunViewProj * world;
+    out.world = world.xyz;
+    out.normal = normalize((instances[iid].model * float4(n, 0.0)).xyz);
+    out.color = instances[iid].color;
+    out.local = lp;
+    out.scale = boxScale(instances[iid].model);
+    out.uv = float2(0.0);
+    return out;
+}
+
+// ------------------------------------------------------------ //
 //  Città + terra: facciate con finestre e tendaggio, strade con corsie,
-//  tetti con unità AC e parapetto, luce solare direzionale.
+//  tetti con unità AC e parapetto, luce solare direzionale, ombre dinamiche.
 
 fragment float4 fragmentMain(VertexOut in [[stage_in]],
-                             constant FlyUniforms &u [[buffer(1)]])
+                             constant FlyUniforms &u [[buffer(1)]],
+                             texture2d<float> shadowMap [[texture(10)]],
+                             sampler shadowSamp [[sampler(1)]],
+                             constant ShadowUniforms &shadowU [[buffer(5)]])
 {
     float3 n = normalize(in.normal);
     float3 s = max(in.scale, float3(0.001));
     float3 sunDir = normalize(u.sunPre.xyz);
     float sunVis = smoothstep(-0.05, 0.12, sunDir.y);
+    // Ombre dinamiche: PCF della shadow map del sole (1 = pieno sole).
+    float shad = shadowFactor(in.world, n, shadowMap, shadowSamp, shadowU);
     float dusk = 1.0 - smoothstep(0.05, 0.45, sunDir.y);
 
     // Terra: asfalto con corsie lungo il corridoio (asse Z) e marciapiedi.
@@ -176,8 +306,8 @@ fragment float4 fragmentMain(VertexOut in [[stage_in]],
             float slabs = step(0.92, fract(w.x / 3.0)) + step(0.92, fract(w.y / 3.0));
             col *= 1.0 - 0.25 * clamp(slabs, 0.0, 1.0);
         }
-        // Ombra morbida del sole sull'asfalto.
-        col *= 0.55 + 0.45 * sunVis;
+        // Ombra morbida del sole sull'asfalto + ombre proiettate dagli edifici.
+        col *= (0.55 + 0.45 * sunVis) * shad;
         return float4(col, 1.0);
     }
 
@@ -220,9 +350,9 @@ fragment float4 fragmentMain(VertexOut in [[stage_in]],
         // Parapetto chiaro sul bordo del tetto.
         float border = min(min(fs.x - abs(uv.x), fs.y - abs(uv.y)) * 1.0, 1.0);
         col = mix(float3(0.6, 0.6, 0.62), col, smoothstep(0.0, 1.2, border));
-        col *= 0.55 + 0.45 * sunVis;
+        col *= (0.55 + 0.45 * sunVis) * shad;
     } else {
-        float sunSide = max(0.0, dot(n, sunDir)) * sunVis;
+        float sunSide = max(0.0, dot(n, sunDir)) * sunVis * shad;
         float3 wall = base * (0.34 + 0.50 * sunSide + 0.14 * max(0.0, dot(n, normalize(float3(0.35, 0.5, 0.6)))));
         float3 glassCol = float3(0.06, 0.10, 0.16);
         float3 litCol = mix(float3(1.0, 0.85, 0.55), float3(0.75, 0.9, 1.0),
@@ -242,8 +372,12 @@ fragment float4 fragmentMain(VertexOut in [[stage_in]],
         col += litCol * lit * bright * dusk * (inGlass || curtain > 0.5 ? 0.5 : 0.0);
     }
 
-    // Illuminazione: riflesso cielo sul vetro.
-    float skyRefl = pow(1.0 - abs(n.y), 3.0) * 0.12;
+    // Illuminazione: riflesso cielo sul vetro con Fresnel (W2 piano AAA):
+    // a incidencee radente il vetro diventa quasi uno specchio (F0 ≈ 0.04).
+    float3 V = normalize(u.cameraPosTime.xyz - in.world);
+    float cosT = saturate(dot(n, V));
+    float fresnel = 0.04 + 0.96 * pow(1.0 - cosT, 5.0);
+    float skyRefl = pow(1.0 - abs(n.y), 3.0) * 0.12 + fresnel * 0.22;
     col += float3(0.45, 0.6, 0.9) * skyRefl;
 
     // Nebbia atmosferica: scompare salendo di quota (Modulo 10: aria più rarefatta).
@@ -434,4 +568,69 @@ fragment float4 compositeFrag(PostOut in [[stage_in]],
     float vig = 1.0 - dot(q, q) * 0.55;
     float grain = (hash12(in.uv * u.bufferSizePad.xy + fract(u.cameraPosTime.w) * 61.7) - 0.5) * 0.012;
     return float4(clamp(x * vig + grain, 0.0, 1.0), 1.0);
+}
+
+// ------------------------------------------------------------ //
+//  PBR città (W2 del piano AAA): Cook-Torrance + ombre dinamiche. Pipeline
+//  opzionale: il Renderer la costruisce solo se la libreria espone questi
+//  simboli; in caso contrario resta attivo fragmentMain (Lambert + ombre).
+
+vertex VertexOut vertexMainPBR(uint vid [[vertex_id]],
+                               uint iid [[instance_id]],
+                               constant FlyUniforms &u [[buffer(1)]],
+                               const device InstanceData* instances [[buffer(2)]],
+                               constant int32_t &count [[buffer(3)]])
+{
+    VertexOut out;
+    uint vi = vid % 36;
+    uint face = vi / 6;
+    float3 lp = cubeVerts[vi];
+    float3 n = cubeNormals[face];
+
+    float4 world = instances[iid].model * float4(lp, 1.0);
+    out.pos = u.viewProj * world;
+    out.world = world.xyz;
+    out.normal = normalize((instances[iid].model * float4(n, 0.0)).xyz);
+    out.color = instances[iid].color;
+    out.local = lp;
+    out.scale = boxScale(instances[iid].model);
+    out.uv = float2(fract(world.x * 0.1), fract(world.z * 0.1));
+    return out;
+}
+
+fragment float4 fragmentMainCityPBR(VertexOut in [[stage_in]],
+                                    constant FlyUniforms &u [[buffer(1)]],
+                                    texture2d<float> shadowMap [[texture(10)]],
+                                    sampler shadowSamp [[sampler(1)]],
+                                    constant ShadowUniforms &shadowU [[buffer(5)]])
+{
+    float3 n = normalize(in.normal);
+    float3 V = normalize(u.cameraPosTime.xyz - in.world);
+    float3 L = normalize(u.sunPre.xyz);
+    float sunVis = smoothstep(-0.05, 0.12, L.y);
+    float shad = shadowFactor(in.world, n, shadowMap, shadowSamp, shadowU);
+
+    float3 baseColor = in.color.rgb;
+    float roughness = 0.7;
+    float metallic = 0.0;
+    cityMaterial(baseColor, in.world, n, roughness, metallic);
+
+    // Cook-Torrance moltiplicato per l'energia solare e le ombre PCF.
+    float3 lit = cookTorranceBRDF(n, V, L, roughness, metallic, baseColor)
+                 * max(0.0, dot(n, L)) * sunVis * shad * float3(1.0, 0.95, 0.8);
+    // Ambient emisferico: cielo sopra, asfalto sotto (attenuato in ombra).
+    float3 ambient = baseColor * mix(float3(0.03, 0.04, 0.10), float3(0.10, 0.12, 0.16),
+                                     0.5 + 0.5 * n.y) * (0.6 + 0.4 * shad);
+    float3 col = lit + ambient;
+
+    // Riflesso cielo sul vetro + nebbia atmosferica (come fragmentMain).
+    float skyRefl = pow(1.0 - abs(n.y), 3.0) * 0.12 * (1.0 - metallic * 0.5);
+    col += float3(0.45, 0.6, 0.9) * skyRefl;
+    float dist = length(u.cameraPosTime.xyz - in.world);
+    float altitudeT = saturate((u.cameraPosTime.y - 400.0) / 2200.0);
+    float dusk = 1.0 - smoothstep(0.05, 0.45, L.y);
+    float fog = (1.0 - exp(-dist * 0.0011)) * (1.0 - 0.75 * altitudeT);
+    float3 fogCol = mix(float3(0.62, 0.74, 0.92), float3(0.85, 0.62, 0.48), dusk * 0.6);
+    col = mix(col, fogCol, clamp(fog, 0.0, 0.85));
+    return float4(col, 1.0);
 }

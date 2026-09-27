@@ -23,6 +23,13 @@ struct InstanceData {
     var color: SIMD4<Float>
 }
 
+// Layout identico a ShadowUniforms di Shaders.metal: solo float4x4 e float4.
+struct ShadowUniforms {
+    var sunViewProj: simd_float4x4
+    var sunPosRadius: SIMD4<Float>   // xyz = posizione sole, w = raggio area
+    var biasResolution: SIMD4<Float> // x = bias depth, y = risoluzione shadow map
+}
+
 final class Renderer: NSObject, MTKViewDelegate {
 
     let device: MTLDevice
@@ -40,6 +47,19 @@ final class Renderer: NSObject, MTKViewDelegate {
     var depthState: MTLDepthStencilState!
     var noDepthState: MTLDepthStencilState!
     var skyDepthState: MTLDepthStencilState!     // test always, scrittura disattivata
+
+    // Shadow mapping (W1 del piano AAA): depth-only dal punto di vista del sole.
+    var pipelineShadowDepth: MTLRenderPipelineState!
+    var shadowDepthState: MTLDepthStencilState!  // scrittura depth senza colore
+    var shadowMap: MTLTexture?
+    var shadowUniformsBuffer: MTLBuffer?
+    var shadowUniforms = ShadowUniforms(
+        sunViewProj: matrix_identity_float4x4,
+        sunPosRadius: SIMD4<Float>(0, 1000, 0, 1200),
+        biasResolution: SIMD4<Float>(0.0015, 2048, 0, 0))
+    // W2: pipeline PBR Cook-Torrance, attiva solo se gli shader PBR compilano
+    // (makeDefaultLibrary() include vertexMainPBR/fragmentMainCityPBR).
+    var pipelineCityPBR: MTLRenderPipelineState?
 
     var bestScore = 0
 
@@ -199,6 +219,43 @@ final class Renderer: NSObject, MTKViewDelegate {
         dsd2.depthCompareFunction = .less
         dsd2.isDepthWriteEnabled = false
         noDepthState = device.makeDepthStencilState(descriptor: dsd2)!
+
+        // ---- Shadow mapping (W1) + PBR città (W2) del piano AAA ----
+        // La shadow map copre l'intera città: bias e risoluzione uniformi per
+        // il PCF 3×3 nel fragment della città.
+        // Ultra 4K: shadow map 2048²; qualità inferiori: 1024² (meno VRAM).
+        let shadowRes: Int = GameSettings.shared.quality == .ultra ? 2048 : 1024
+        let sTexDesc = MTLTextureDescriptor.texture2DDescriptor(
+            pixelFormat: .depth32Float, width: shadowRes, height: shadowRes, mipmapped: false)
+        sTexDesc.usage = [.renderTarget, .shaderRead]
+        sTexDesc.storageMode = .private
+        shadowMap = device.makeTexture(descriptor: sTexDesc)
+        shadowUniforms.biasResolution = SIMD4<Float>(0.0015, Float(shadowRes), 0, 0)
+        if shadowUniformsBuffer == nil {
+            shadowUniformsBuffer = device.makeBuffer(
+                length: MemoryLayout<ShadowUniforms>.stride, options: .storageModeShared)
+        }
+
+        let vsShadow = lib.makeFunction(name: "vertexShadowDepth")!
+        let shadowDesc = MTLRenderPipelineDescriptor()
+        shadowDesc.vertexFunction = vsShadow
+        shadowDesc.colorAttachments[0].pixelFormat = .invalid
+        shadowDesc.depthAttachmentPixelFormat = .depth32Float
+        pipelineShadowDepth = (try? device.makeRenderPipelineState(descriptor: shadowDesc))!
+
+        let dsdSh = MTLDepthStencilDescriptor()
+        dsdSh.depthCompareFunction = .less
+        dsdSh.isDepthWriteEnabled = true
+        shadowDepthState = device.makeDepthStencilState(descriptor: dsdSh)!
+
+        // PBR città: opzionale (W2). Se gli entry point non sono nella libreria
+        // si resta su fragmentMain (Lambert + ombre), sempre disponibile.
+        if let vsPBR = lib.makeFunction(name: "vertexMainPBR"),
+           let fsPBR = lib.makeFunction(name: "fragmentMainCityPBR") {
+            pipelineCityPBR = makePipe(vsPBR, fsPBR, additive: false, depthFormat: depthFmt)
+        } else {
+            pipelineCityPBR = nil
+        }
     }
 
     func mtkView(_ view: MTKView, drawableSizeWillChange size: CGSize) {}
@@ -218,6 +275,7 @@ final class Renderer: NSObject, MTKViewDelegate {
 
         let aspect = Float(dw) / Float(max(1, dh))
         uniforms = makeUniforms(aspect: aspect, width: Float(dw), height: Float(dh))
+        shadowUniforms = makeShadowUniforms(time: uniforms.time)
 
         // Cielo in base alla qualità e alla quota: sopra ~2600 m vira al blu spazio.
         let alt = fly_altitude()
@@ -245,10 +303,45 @@ final class Renderer: NSObject, MTKViewDelegate {
             d.colorAttachments[0].clearColor = clearColor
             rpd = d
         }
+        // -------- Pass 0: shadow mapping (W1 piano AAA) --------
+        // Depth-only dal punto di vista del sole, PRIMA di aprire l'encoder
+        // della scena (Metal non consente encoder sovrapposti).
+        if let sm = shadowMap, let shBuf = shadowUniformsBuffer {
+            shBuf.contents().copyMemory(from: &shadowUniforms,
+                                        byteCount: MemoryLayout<ShadowUniforms>.stride)
+            let shPass = MTLRenderPassDescriptor()
+            shPass.depthAttachment.texture = sm
+            shPass.depthAttachment.loadAction = .clear
+            shPass.depthAttachment.storeAction = .store
+            shPass.depthAttachment.clearDepth = 1.0
+            if let shEnc = cmd.makeRenderCommandEncoder(descriptor: shPass) {
+                shEnc.setCullMode(.none)
+                shEnc.setRenderPipelineState(pipelineShadowDepth)
+                shEnc.setDepthStencilState(shadowDepthState)
+                shEnc.setVertexBuffer(shBuf, offset: 0, index: 1)
+                if let city = drawCityMatrices() {
+                    var cCount = city.count
+                    shEnc.setVertexBuffer(city.buffer, offset: 0, index: 2)
+                    shEnc.setVertexBytes(&cCount, length: MemoryLayout<Int32>.stride, index: 3)
+                    shEnc.drawPrimitives(type: .triangle, vertexStart: 0, vertexCount: 36,
+                                         instanceCount: Int(city.count))
+                }
+                drawGroundShadow(enc: shEnc)
+                shEnc.endEncoding()
+            }
+        }
+
         guard let enc = cmd.makeRenderCommandEncoder(descriptor: rpd) else { return }
 
         enc.setVertexBuffer(uniformBuffer(), offset: 0, index: 1)
         enc.setFragmentBuffer(uniformBuffer(), offset: 0, index: 1)   // nebbia/luce solare nei fragment
+        if let shBuf = shadowUniformsBuffer {
+            enc.setFragmentBuffer(shBuf, offset: 0, index: 5)          // uniform ombre
+        }
+        if let sm = shadowMap {
+            enc.setFragmentTexture(sm, index: 10)                      // shadow map (PCF 3×3)
+        }
+        enc.setFragmentSamplerState(shadowSamplerState, index: 1)
         enc.setCullMode(.none)
 
         // Cielo procedurale: quad full-screen a depth always, sotto ogni cosa.
@@ -326,7 +419,100 @@ final class Renderer: NSObject, MTKViewDelegate {
     }
 
     // ------------------------------------------------------------ //
-    //  Target offscreen HDR + MSAA
+    //  Shadow mapping (W1 del piano AAA)
+
+    /// Sampler per il PCF 3×3 della shadow map.
+    private lazy var shadowSamplerState: MTLSamplerState = {
+        let d = MTLSamplerDescriptor()
+        d.minFilter = .linear
+        d.magFilter = .linear
+        d.mipFilter = .notMipmapped
+        d.sAddressMode = .clampToEdge
+        d.tAddressMode = .clampToEdge
+        d.compareFunction = nil          // PCF manuale: comparazione nel fragment
+        return device.makeSamplerState(descriptor: d)!
+    }()
+
+    /// Matrici mondo degli edifici (distrutti esclusi): condivise tra shadow
+    /// pass e render pass in un buffer riempito una volta per frame.
+    private var cityMatrixBuffer: MTLBuffer?
+    private var cityMatrixCapacity = 0
+    private var cityMatrixCount: Int32 = 0
+
+    private func drawCityMatrices() -> (buffer: MTLBuffer, count: Int32)? {
+        let n = Int(fly_building_count())
+        guard n > 0 else { return nil }
+        if cityMatrixBuffer == nil || cityMatrixCapacity < n {
+            cityMatrixCapacity = max(64, n * 2)
+            cityMatrixBuffer = device.makeBuffer(
+                length: cityMatrixCapacity * MemoryLayout<InstanceData>.stride,
+                options: .storageModeShared)
+        }
+        guard let buf = cityMatrixBuffer else { return nil }
+        let ptr = buf.contents().bindMemory(to: InstanceData.self, capacity: cityMatrixCapacity)
+        var count: Int32 = 0
+        for i in 0..<n {
+            var pos = FlyVec3(); var size = FlyVec3(); var hue: Float = 0
+            fly_building(Int32(i), &pos, &size, &hue)
+            if size.y <= 0 { continue }        // distrutto dal laser
+            let m = MathUtil.translate(x: pos.x, y: pos.y + size.y, z: pos.z)
+                * MathUtil.scaleNonUniform(sx: size.x, sy: size.y, sz: size.z)
+            ptr[Int(count)] = InstanceData(model: m, color: SIMD4<Float>(1, 1, 1, 1))
+            count += 1
+        }
+        guard count > 0 else { return nil }
+        cityMatrixCount = count
+        return (buf, count)
+    }
+
+    /// Terra nella shadow map: anche il suolo riceve ombre dagli edifici, quindi
+    /// deve scriverle (bias del fragment evita l'auto-ombreggiatura falsa).
+    private func drawGroundShadow(enc: MTLRenderCommandEncoder) {
+        let m = MathUtil.translate(x: 0, y: -1.0, z: 0)
+            * MathUtil.scaleNonUniform(sx: 1600, sy: 1.0, sz: 2600)
+        var inst = InstanceData(model: m, color: SIMD4<Float>(1, 1, 1, 1))
+        enc.setVertexBytes(&inst, length: MemoryLayout<InstanceData>.stride, index: 2)
+        var one = Int32(1)
+        enc.setVertexBytes(&one, length: MemoryLayout<Int32>.stride, index: 3)
+        enc.drawPrimitives(type: .triangle, vertexStart: 0, vertexCount: 36, instanceCount: 1)
+    }
+
+    /// Vista-proiezione ortografica del sole: centro l'area sulla città e la
+    /// oriento dal sole verso l'origine (approccio QUICK_START, adattato a
+    /// MathUtil del progetto).
+    private func makeShadowUniforms(time: Float) -> ShadowUniforms {
+        let sun = MathUtil.sunDirection(time: time)
+        let dist: Float = 1400.0
+        let sunPos = SIMD3<Float>(sun.x * dist, sun.y * dist + 250, sun.z * dist)
+        let target = SIMD3<Float>(0, 200, 0)   // centro area città
+        let fwd = simd_normalize(target - sunPos)
+        let worldUp = SIMD3<Float>(0, 1, 0)
+        let right = simd_normalize(simd_cross(fwd, worldUp))
+        let up = simd_normalize(simd_cross(right, fwd))
+
+        var V = matrix_identity_float4x4
+        V.columns.0 = SIMD4<Float>(right.x, up.x, -fwd.x, 0)
+        V.columns.1 = SIMD4<Float>(right.y, up.y, -fwd.y, 0)
+        V.columns.2 = SIMD4<Float>(right.z, up.z, -fwd.z, 0)
+        V.columns.3 = SIMD4<Float>(-simd_dot(right, sunPos), -simd_dot(up, sunPos),
+                                   simd_dot(fwd, sunPos), 1)
+
+        // Ortografica l=-1100..1100, b=0..2200, n=1..f=3200 (come QUICK_START,
+        // estesa per coprire l'intera area città con margine).
+        let l: Float = -1100, r: Float = 1100, b: Float = 0, t: Float = 2200
+        let n: Float = 1, f: Float = 3200
+        var P = matrix_identity_float4x4
+        P.columns.0 = SIMD4<Float>(2 / (r - l), 0, 0, 0)
+        P.columns.1 = SIMD4<Float>(0, 2 / (t - b), 0, 0)
+        P.columns.2 = SIMD4<Float>(0, 0, 1 / (n - f), 0)
+        P.columns.3 = SIMD4<Float>((l + r) / (l - r), (b + t) / (b - t), n / (n - f), 1)
+
+        return ShadowUniforms(
+            sunViewProj: P * V,
+            sunPosRadius: SIMD4<Float>(sunPos.x, sunPos.y, sunPos.z, 1200),
+            biasResolution: SIMD4<Float>(shadowUniforms.biasResolution.x,
+                                         shadowUniforms.biasResolution.y, 0, 0))
+    }
 
     private func offscreenPass(scene: MTLTexture, depth: MTLTexture,
                                clear: MTLClearColor) -> MTLRenderPassDescriptor {
