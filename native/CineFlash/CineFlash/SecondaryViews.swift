@@ -466,7 +466,7 @@ struct PermissionsView: View {
 
                     VStack(alignment: .leading, spacing: 10) {
                         Text("Posizione").font(Theme.ui(15, .bold)).foregroundColor(Theme.text)
-                        Text("Usata solo quando tocchi \"Usa la mia posizione\" nella prenotazione: serve a trovare i cinema vicini. Non viene mai salvata né inviata.")
+                        Text(CinemasService.locationPrivacyNotice)
                             .font(Theme.ui(13)).foregroundColor(Theme.textDim)
                     }
                     .cardSurface()
@@ -506,7 +506,11 @@ struct PrivacyView: View {
                     Text("Privacy").font(Theme.serif(28)).foregroundColor(Theme.text)
                     VStack(alignment: .leading, spacing: 10) {
                         Text("CineFlash non ti traccia.").font(Theme.ui(15, .bold)).foregroundColor(Theme.text)
-                        Text("Nessun account, nessun analytics, nessun tracker, nessun dato inviato a server nostri. Le tue liste, le impostazioni e la storia di lettura vivono solo sul tuo dispositivo.\n\nI dati di catalogo vengono da TMDB e iTunes; le notizie dalle testate italiane indicate nei feed. La posizione, se la attivi, serve solo a ordinare i cinema vicini e non viene memorizzata.")
+                        Text("Nessun account, nessun analytics, nessun tracker, nessun dato inviato a server nostri. Le tue liste, le impostazioni e la storia di lettura vivono solo sul tuo dispositivo.\n\nI dati di catalogo vengono da TMDB e iTunes; le notizie dalle testate italiane indicate nei feed.")
+                            .font(Theme.ui(14)).foregroundColor(Theme.textDim).lineSpacing(4)
+                        Text(CinemasService.locationPrivacyNotice)
+                            .font(Theme.ui(14)).foregroundColor(Theme.textDim).lineSpacing(4)
+                        Text("Anche la città inserita a mano viene salvata sul dispositivo e inviata a Overpass. Quando apri un sito per prenotare, la città può essere inclusa nel link inviato al sito.")
                             .font(Theme.ui(14)).foregroundColor(Theme.textDim).lineSpacing(4)
                     }
                     .cardSurface()

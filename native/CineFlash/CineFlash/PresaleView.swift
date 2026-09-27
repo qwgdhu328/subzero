@@ -352,6 +352,9 @@ struct BookingSheet: View {
                             .font(.system(size: 12, weight: .heavy)).kerning(1.2)
                             .foregroundColor(Theme.textDim)
 
+                        Text(CinemasService.locationPrivacyNotice)
+                            .font(Theme.ui(13)).foregroundColor(Theme.textDim)
+
                         Button(action: { Task { await locateAndSearch() } }) {
                             HStack {
                                 if locating {

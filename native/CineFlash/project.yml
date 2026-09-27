@@ -37,7 +37,7 @@ targets:
             CFBundleURLSchemes: [cineflash]
         NSUserNotificationsUsageDescription: CineFlash ti avvisa quando si aprono le prevendite e quando arrivano notizie importanti sul cinema.
         NSPhotoLibraryAddUsageDescription: Permette di salvare i poster dei film nella tua fototeca.
-        NSLocationWhenInUseUsageDescription: CineFlash usa la posizione solo per ordinare i cinema più vicini quando prenoti un biglietto. La posizione non viene mai salvata né inviata ad alcun server.
+        NSLocationWhenInUseUsageDescription: CineFlash invia le coordinate al servizio di geocodifica di Apple per ricavare la città. La città viene salvata sul dispositivo e inviata ai server Overpass (OpenStreetMap) per cercare i cinema. CineFlash non salva le coordinate né le invia a Overpass.
     settings:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: com.cineflash.app
