@@ -169,28 +169,9 @@ enum AIService {
     }
 
     static func rewriteArticle(_ item: NewsItem) async -> AiArticle? {
-        // 1) Scarica l'HTML originale per testo e immagini
-        var articleText: String?
-        var images: [String] = []
-        if let url = URL(string: item.link) {
-            var req = URLRequest(url: url)
-            req.timeoutInterval = 12
-            req.setValue("CineFlash/2.0 (app; usage: ai newsroom)", forHTTPHeaderField: "User-Agent")
-            if let (data, resp) = try? await URLSession.shared.data(for: req),
-               let http = resp as? HTTPURLResponse, (200..<300).contains(http.statusCode),
-               let html = String(data: data, encoding: .utf8), html.count > 500 {
-                articleText = String(html
-                    .replacingOccurrences(of: "<script[\\s\\S]*?</script>", with: " ", options: [.regularExpression, .caseInsensitive])
-                    .replacingOccurrences(of: "<style[\\s\\S]*?</style>", with: " ", options: [.regularExpression, .caseInsensitive])
-                    .replacingOccurrences(of: "<[^>]+>", with: " ", options: .regularExpression)
-                    .replacingOccurrences(of: "\\s+", with: " ", options: .regularExpression)
-                    .trimmingCharacters(in: .whitespacesAndNewlines)
-                    .prefix(4200))
-                images = Self.extractImages(html, baseUrl: item.link)
-            }
-        }
-
-        // 2) Chiede la riscrittura ai modelli
+        // I link RSS non sono destinazioni fidate: possono raggiungere pagine private,
+        // anche tramite redirect o DNS. Invia al cloud solo titolo e sommario del feed,
+        // senza scaricare automaticamente il link per arricchire il contesto.
         let prompt = """
         Riscrivi questa notizia di cinema per i lettori dell'app CineFlash in ITALIANO CHIARO E SEMPLICE.
 
@@ -202,7 +183,6 @@ enum AIService {
         NOTIZIA:
         Titolo originale: \(item.title)
         \(item.summary.isEmpty ? "" : "Sommario dal feed: \(item.summary)")
-        \(articleText.map { "Testo completo:\n\($0)" } ?? "")
 
         Rispondi SOLO con JSON valido:
         {"title": "...", "standfirst": "...", "paragraphs": ["...", "..."]}
@@ -240,7 +220,7 @@ enum AIService {
                 title: finalTitle,
                 standfirst: standfirst,
                 paragraphs: Array(paragraphs),
-                images: images,
+                images: [],
                 source: item.source,
                 sourceUrl: item.link,
                 publishedAt: item.publishedAt,
