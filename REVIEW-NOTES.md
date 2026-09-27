@@ -33,9 +33,13 @@ the box; users may optionally replace it with their own key in Settings
 (themoviedb.org, free tier). Movie data and posters are provided by TMDB but this
 product uses the TMDB API but is not endorsed or certified by TMDB.
 
-**Location permission:** requested only when the user taps "Sort cinemas by
-distance" during ticket booking (booking happens on the cinema's own website).
-Used in memory only, never stored or transmitted.
+**Location permission (native iOS app):** requested when the user taps "Use my
+location" during ticket booking. Coordinates are sent to Apple's geocoding
+service to determine the city. The city is stored locally and sent to Overpass
+(OpenStreetMap) to find cinemas. CineFlash does not store coordinates or send
+them to Overpass. Users can enter a city manually instead; that city is also
+stored locally and sent to Overpass. Booking opens an external website, and
+the link may include the city.
 
 **Testing tips:** any RSS feed can be toggled in Settings → "Fonti notizie".
 To see the AI download flow, open the AI tab after a fresh install; on devices
@@ -61,9 +65,13 @@ utente viene inviato online. Disattivabile dalle Impostazioni.
 mai per cambiare funzionalità rispetto a quanto revisionato.
 
 La chiave TMDB inclusa è quella gratuita per sviluppatori; l'utente può
-sostituirla con la sua. Il permesso posizione serve solo per ordinare i cinema
-per distanza in fase di prenotazione (la prenotazione avviene sul sito del
-cinema), non viene mai salvato o trasmesso.
+sostituirla con la sua. Nell'app iOS nativa, il permesso posizione viene richiesto
+quando tocchi "Usa la mia posizione" durante la prenotazione. Le coordinate
+vengono inviate al servizio di geocodifica di Apple per ricavare la città. La città
+viene salvata sul dispositivo e inviata a Overpass (OpenStreetMap) per cercare i
+cinema. CineFlash non salva le coordinate né le invia a Overpass. Puoi inserire
+la città a mano; anche questa viene salvata sul dispositivo e inviata a Overpass.
+La prenotazione apre un sito esterno e il link può includere la città.
 
 ---
 

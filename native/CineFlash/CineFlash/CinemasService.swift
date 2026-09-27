@@ -14,6 +14,8 @@ struct Cinema: Identifiable, Equatable {
 }
 
 enum CinemasService {
+    static let locationPrivacyNotice = "Quando tocchi \"Usa la mia posizione\", le coordinate vengono inviate al servizio di geocodifica di Apple per ricavare la città. La città viene salvata sul dispositivo e inviata ai server Overpass (OpenStreetMap) per cercare i cinema. CineFlash non salva le coordinate né le invia a Overpass. Puoi anche scrivere la città senza usare la posizione."
+
     private static let endpoints = [
         "https://overpass-api.de/api/interpreter",
         "https://overpass.kumi.systems/api/interpreter",
