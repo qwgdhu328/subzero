@@ -42,7 +42,7 @@ final class Renderer: NSObject, MTKViewDelegate {
     private var sphereVB: MTLBuffer!; private var sphereIB: MTLBuffer!; private var sphereICount = 0
     private var capsuleVB: MTLBuffer!; private var capsuleIB: MTLBuffer!; private var capsuleICount = 0
     private var capeVB: MTLBuffer!
-    private static let capeQuadCount = 16
+    private static let capeQuadCount = 12   // 4 file × 3 colonne di quad
     private var capeIndices: [UInt16] = []
 
     private var uniforms = FlyUniforms(
@@ -492,34 +492,34 @@ final class Renderer: NSObject, MTKViewDelegate {
 
     private func drawCape(enc: MTLRenderCommandEncoder, root: simd_float4x4, t: Float,
                           flying: Bool, wind: Float, lift: Float) {
-        // 16 quad = 5 file × 2 colonne, animati a mano (onde + flare).
+        // Griglia 5×4 punti → 12 quad, animati a mano (onde + flare).
         var verts: [Float] = []
-        var grid: [SIMD3<Float>] = Array(repeating: .zero, count: 5 * 2)
+        var grid: [SIMD3<Float>] = Array(repeating: .zero, count: 5 * 4)
         for r in 0...4 {
             let fr = Float(r)
             let sway = sin(t * 6.0 - fr * 0.9) * (0.05 + 0.13 * fr) * wind
             let flare = 0.24 + 0.055 * fr + (flying ? 0 : wind * 0.02)
             let y = 1.30 - (0.34 * fr + fr * fr * 0.02) + lift * fr * 0.35
             let z = 0.26 + 0.055 * fr + abs(sway) * 0.6
-            for c in 0...1 {
+            for c in 0...3 {
                 let fc = Float(c)
-                let x = (fc - 0.5) * 2.0 * (0.30 + 0.05 * fr)
+                let x = (fc - 1.5) / 1.5 * (0.30 + 0.05 * fr)   // da -w a +w su 4 colonne
                 let px = x * (1.0 + 0.18 * fr) + sin(t * 4.3 - fr * 1.3 + fc) * 0.02 * fr * wind
-                let pz = z + sway * (0.4 + 0.6 * fc)
+                let pz = z + sway * (0.4 + 0.2 * fc)
                 let py = y + (flying ? sin(t * 5.0 - fr) * 0.02 * fr : 0)
-                grid[r * 2 + c] = SIMD3<Float>(px, py, pz)
+                grid[r * 4 + c] = SIMD3<Float>(px, py, pz)
             }
         }
-        // Costruisci i 16 quad (pos+normal+uv).
+        // Costruisci i 12 quad (pos+normal+uv): 48 vertici.
         var vi = 0
         for q in 0..<Self.capeQuadCount {
-            let r = q / 2, c = q % 2
-            let a = grid[r * 2 + c]
-            let b = grid[r * 2 + c + 1]
-            let d = grid[(r + 1) * 2 + c]
-            let e = grid[(r + 1) * 2 + c + 1]
+            let r = q / 3, c = q % 3
+            let a = grid[r * 4 + c]
+            let b = grid[r * 4 + c + 1]
+            let d = grid[(r + 1) * 4 + c]
+            let e = grid[(r + 1) * 4 + c + 1]
             let n = simd_normalize(simd_cross(b - a, d - a))
-            let u0 = Float(c), u1 = Float(c + 1)
+            let u0 = Float(c) / 3.0, u1 = Float(c + 1) / 3.0
             let v0 = 1.0 - Float(r) / 4.0, v1 = 1.0 - Float(r + 1) / 4.0
             func push(_ p: SIMD3<Float>, _ uv: (Float, Float)) {
                 verts.append(contentsOf: [p.x, p.y, p.z, n.x, n.y, n.z, uv.0, uv.1])
@@ -647,41 +647,41 @@ final class Renderer: NSObject, MTKViewDelegate {
     }
 
     private func drawLaser(enc: MTLRenderCommandEncoder) {
-        var count = 0
-        var total = 0
         let active = fly_laser_active() == 1
+        let segs = Int(fly_laser_seg_count())
+        let need = (active ? 2 : 0) + segs
+        guard need > 0 else { return }
+
+        // Un'unica allocazione per il frame: evita ptr steli dopo realloc.
+        let buf = ensure(&glowInstances, capacity: &glowCapacity, needed: need)
+        let ptr = buf.contents().bindMemory(to: InstanceData.self, capacity: glowCapacity)
+        var count = 0
+
         if active {
             var eye = FlyVec3(); var end = FlyVec3(); var heat: Float = 0
             var a: Int32 = 0
             fly_laser(&eye, &end, &a, &heat)
             let flicker = 0.85 + 0.15 * sin(uniforms.time * 90)
-            let buf = ensure(&glowInstances, capacity: &glowCapacity, needed: 2)
-            let ptr = buf.contents().bindMemory(to: InstanceData.self, capacity: glowCapacity)
-            ptr[0] = InstanceData(model: beamMatrix(from: SIMD3<Float>(eye.x, eye.y, eye.z),
-                                                     to: SIMD3<Float>(end.x, end.y, end.z),
-                                                     width: 0.30 + 0.25 * heat),
-                                  color: SIMD4<Float>(1.0, 0.15, 0.1, 0.95 * flicker))
-            ptr[1] = InstanceData(model: beamMatrix(from: SIMD3<Float>(eye.x, eye.y, eye.z),
-                                                    to: SIMD3<Float>(end.x, end.y, end.z),
-                                                    width: 0.7 + 0.4 * heat),
-                                  color: SIMD4<Float>(1.0, 0.4, 0.3, 0.35 * flicker))
-            count = 2; total = 2
+            let e3 = SIMD3<Float>(eye.x, eye.y, eye.z)
+            let d3 = SIMD3<Float>(end.x, end.y, end.z)
+            ptr[count] = InstanceData(model: beamMatrix(from: e3, to: d3,
+                                                        width: 0.30 + 0.25 * heat),
+                                      color: SIMD4<Float>(1.0, 0.15, 0.1, 0.95 * flicker))
+            count += 1
+            ptr[count] = InstanceData(model: beamMatrix(from: e3, to: d3,
+                                                        width: 0.7 + 0.4 * heat),
+                                      color: SIMD4<Float>(1.0, 0.4, 0.3, 0.35 * flicker))
+            count += 1
         }
-        let segs = Int(fly_laser_seg_count())
-        if segs > 0 {
-            let buf = ensure(&glowInstances, capacity: &glowCapacity, needed: total + segs)
-            let ptr = buf.contents().bindMemory(to: InstanceData.self, capacity: glowCapacity)
-            for i in 0..<segs {
-                var a = FlyVec3(); var b = FlyVec3(); var w: Float = 0; var life: Float = 0
-                fly_laser_seg(Int32(i), &a, &b, &w, &life)
-                ptr[total + i] = InstanceData(
-                    model: beamMatrix(from: SIMD3<Float>(a.x, a.y, a.z),
-                                      to: SIMD3<Float>(b.x, b.y, b.z), width: w * life),
-                    color: SIMD4<Float>(1.0, 0.2, 0.12, 0.35 * life))
-            }
-            count += segs
+        for i in 0..<segs {
+            var a = FlyVec3(); var b = FlyVec3(); var w: Float = 0; var life: Float = 0
+            fly_laser_seg(Int32(i), &a, &b, &w, &life)
+            ptr[count] = InstanceData(
+                model: beamMatrix(from: SIMD3<Float>(a.x, a.y, a.z),
+                                  to: SIMD3<Float>(b.x, b.y, b.z), width: w * life),
+                color: SIMD4<Float>(1.0, 0.2, 0.12, 0.35 * life))
+            count += 1
         }
-        guard count > 0 else { return }
         enc.setRenderPipelineState(pipelineGlow)
         enc.setDepthStencilState(noDepthState)
         enc.setVertexBuffer(glowInstances, offset: 0, index: 2)
