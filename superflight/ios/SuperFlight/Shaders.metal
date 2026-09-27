@@ -113,24 +113,24 @@ fragment float4 fragmentMain(VertexOut in [[stage_in]],
     if (n.y > 0.9 && in.scale.y < 2.5) {
         float2 w = in.world.xz;
         float lane = abs(w.x) < 9.0 ? 1.0 : 0.0;          // carreggiata |x| < 9 m
-        float3 asphalt = float3(0.10, 0.105, 0.12) * (0.85 + 0.3 * valueNoise2(w * 0.35));
+        float3 asphalt = float3(0.10, 0.105, 0.12) * (0.85 + 0.3 * valueNoise2(w));
         float3 sidewalk = float3(0.52, 0.52, 0.54) * (0.9 + 0.2 * valueNoise2(w * 0.9));
         float3 col = mix(sidewalk, asphalt, lane);
 
         if (lane > 0.5) {
-            // Corsia centrale tratteggiata + bordi laterali.
-            float dashes = step(0.5, fract(w.z / 12.0));
+            // Corsia centrale tratteggiata + bordi laterali (w.y = asse Z).
+            float dashes = step(0.5, fract(w.y / 12.0));
             float center = smoothstep(0.35, 0.25, abs(w.x)) * dashes;
             float edges = smoothstep(0.5, 0.35, abs(abs(w.x) - 7.5));
             float3 paint = float3(0.85, 0.85, 0.8);
             col = mix(col, paint, max(center, edges) * 0.9);
             // Strisce pedonali ogni 90 m.
-            float cw = smoothstep(0.30, 0.45, abs(fract(w.z / 90.0) - 0.5) * 2.0);
-            float zebra = step(fract(w.x / 2.0), 0.5) * (1.0 - cw) * step(abs(w.z - round(w.z / 90.0) * 90.0), 3.0);
+            float cw = smoothstep(0.30, 0.45, abs(fract(w.y / 90.0) - 0.5) * 2.0);
+            float zebra = step(fract(w.x / 2.0), 0.5) * (1.0 - cw) * step(abs(w.y - round(w.y / 90.0) * 90.0), 3.0);
             col = mix(col, paint, zebra * 0.85);
         } else {
             // Lastre del marciapiede.
-            float slabs = step(0.92, fract(w.x / 3.0)) + step(0.92, fract(w.z / 3.0));
+            float slabs = step(0.92, fract(w.x / 3.0)) + step(0.92, fract(w.y / 3.0));
             col *= 1.0 - 0.25 * clamp(slabs, 0.0, 1.0);
         }
         return float4(col, 1.0);
