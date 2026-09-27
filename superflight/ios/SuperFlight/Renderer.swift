@@ -157,6 +157,7 @@ final class Renderer: NSObject, MTKViewDelegate {
         drawRings(enc: enc)
         drawLaser(enc: enc)
         drawParticles(enc: enc)
+        drawSonicBoom(enc: enc)
 
         enc.endEncoding()
         cmd.present(drawable)
@@ -188,7 +189,12 @@ final class Renderer: NSObject, MTKViewDelegate {
             let t = Float(fly_time()) * 60.0
             camPos += SIMD3<Float>(sin(t*1.1), cos(t*1.7), sin(t*1.3)) * sh * 0.8
         }
-        let proj = MathUtil.perspective(fovY: 1.22, aspect: aspect, zNear: 0.5, zFar: 2200)
+        // FOV dinamico (§2.3): da 70° a ~102° con la velocità; kick extra al boom sonico.
+        let v = fly_speed()
+        let speedT = min(1.0, v / 833.0)
+        var fov = 1.22 + speedT * 0.55                       // 70° → ~102°
+        fov += fly_sonic_ripple() * 0.25                     // kick all'onda d'urto
+        let proj = MathUtil.perspective(fovY: fov, aspect: aspect, zNear: 0.5, zFar: 2200)
         let view = MathUtil.lookFrom(eye: camPos, quat: SIMD4<Float>(cq.x, cq.y, cq.z, w2))
         return FlyUniforms(viewProj: proj * view, cameraPos: camPos, time: Float(fly_time()))
     }
@@ -739,6 +745,28 @@ final class Renderer: NSObject, MTKViewDelegate {
         var c = Int32(count)
         enc.setVertexBytes(&c, length: MemoryLayout<Int32>.stride, index: 3)
         enc.drawPrimitives(type: .triangle, vertexStart: 0, vertexCount: 36, instanceCount: count)
+    }
+
+    /// Onda d'urto del boom sonico: anello di glow che si espande dal giocatore (§2.2).
+    private func drawSonicBoom(enc: MTLRenderCommandEncoder) {
+        let ripple = fly_sonic_ripple()
+        guard ripple > 0.01 else { return }
+        let p = fly_player_pos()
+        let q = fly_player_quat()
+        let qw = sqrtf(max(0, 1 - q.x*q.x - q.y*q.y - q.z*q.z))
+        // Anello orientato come il giocatore, che si allarga e sfuma.
+        let radius = (1.0 - ripple) * 260.0 + 8.0
+        let m = MathUtil.translate(x: p.x, y: p.y, z: p.z)
+            * MathUtil.rotateQuat(x: q.x, y: q.y, z: q.z, w: qw)
+            * MathUtil.scaleNonUniform(sx: radius, sy: radius, sz: 1.5)
+        var inst = InstanceData(model: m,
+                                color: SIMD4<Float>(0.75, 0.9, 1.0, ripple * 0.85))
+        enc.setRenderPipelineState(pipelineGlow)
+        enc.setDepthStencilState(noDepthState)
+        enc.setVertexBytes(&inst, length: MemoryLayout<InstanceData>.stride, index: 2)
+        var one = Int32(1)
+        enc.setVertexBytes(&one, length: MemoryLayout<Int32>.stride, index: 3)
+        enc.drawPrimitives(type: .triangle, vertexStart: 0, vertexCount: 36, instanceCount: 1)
     }
 
     private func beamMatrix(from: SIMD3<Float>, to: SIMD3<Float>, width: Float) -> simd_float4x4 {

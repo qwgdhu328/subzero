@@ -74,6 +74,8 @@ struct GameStateData {
     float boostFuel = 1.0f;          // 0..1
     float shake = 0.0f;              // trauma camera shake 0..1
     float crashTimer = 0.0f;
+    float sonicRipple = 0.0f;        // onda d'urto post-Mach 1 (0..1, decade)
+    bool  supersonic = false;        // oltre Mach 1 (per FOV/effetti)
 
     // --- giocatore ---
     Vec3 playerPos{0, 60, 0};        // = piedi del personaggio

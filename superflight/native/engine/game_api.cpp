@@ -71,6 +71,8 @@ int32_t fly_laser_active(void) { return g && g->laserActive && !g->laserOverheat
 int32_t fly_laser_hit(void)    { return g && g->laserHit ? 1 : 0; }
 int32_t fly_on_ground(void)    { return g && g->state == GameState::Walking && g->onGround ? 1 : 0; }
 float   fly_anim_phase(void)   { return g ? g->animPhase : 0; }
+float   fly_sonic_ripple(void) { return g ? g->sonicRipple : 0; }
+int32_t fly_supersonic(void)   { return g && g->supersonic ? 1 : 0; }
 
 FlyVec3 fly_player_pos(void) { return g ? v3(g->playerPos) : FlyVec3{0, 60, 0}; }
 

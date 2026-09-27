@@ -9,6 +9,7 @@ namespace fly {
 // ---------------------------------------------------------------------- //
 //  Parametri di gioco (tweak qui)
 // ---------------------------------------------------------------------- //
+static constexpr float kMachOne      = 343.0f;  // m/s: soglia boom sonico
 static constexpr float kBaseSpeed    = 42.0f;   // m/s
 static constexpr float kBoostSpeed   = 833.0f;  // m/s ≈ 3000 km/h in boost
 static constexpr float kAccel        = 210.0f;  // m/s^2: spinta da supereroe fino a max speed
@@ -272,6 +273,25 @@ void GameStateData::updateFlying(double dt) {
     playerPos = playerPos + playerQuat.forward() * (speed * dts);
     altitude = playerPos.y;
     score = std::max(score, (int)(-playerPos.z / 10.0f) + ringsPassed * 50);
+
+    // Boom sonico (§2.2 del design): superamento di Mach 1 → onda d'urto.
+    const bool nowSupersonic = speed >= kMachOne;
+    if (nowSupersonic && !supersonic) {
+        sonicRipple = 1.0f;
+        shake = std::max(shake, 0.5f);
+        spawnBurst(playerPos, 40, 0.08f);
+        // Scoppio dei vetri: scintille dai tetti degli edifici vicini alla traiettoria.
+        for (auto& b : buildings) {
+            if (b.damage >= 1.0f) continue;
+            const float dx = std::abs(playerPos.x - b.pos.x);
+            const float dz = std::abs(b.pos.z - playerPos.z);
+            if (dx < b.size.x + 60.0f && dz < 220.0f && playerPos.y < b.size.y + 40.0f) {
+                spawnBurst(Vec3(b.pos.x, b.size.y + 1.0f, b.pos.z), 8, 0.14f);
+            }
+        }
+    }
+    supersonic = nowSupersonic;
+    sonicRipple = std::max(0.0f, sonicRipple - dts * 0.8f);   // decade in ~1.2 s
 
     // Spawn mondo man mano che avanzi.
     while (playerPos.z - 800.0f < nextSpawnZ) spawnChunk();

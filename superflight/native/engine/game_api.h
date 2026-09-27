@@ -39,6 +39,8 @@ int32_t fly_laser_active(void);            // raffica in corso (1/0)
 int32_t fly_laser_hit(void);               // il raggio colpisce qualcosa (1/0)
 int32_t fly_on_ground(void);               // a piedi e a terra (per pose/animazioni)
 float   fly_anim_phase(void);              // fase ciclo camminata/corsa (per il renderer)
+float   fly_sonic_ripple(void);            // onda d'urto post-Mach 1 (0..1)
+int32_t fly_supersonic(void);              // oltre Mach 1 (per FOV dinamico)
 
 // Posizioni per il renderer
 FlyVec3 fly_player_pos(void);
