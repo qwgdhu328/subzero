@@ -1,4 +1,4 @@
-import { NewsItem, NewsSource } from "../models/types";
+import type { NewsItem, NewsSource } from "../models/types";
 
 /** Retry con backoff semplice: 2 tentativi extra. */
 async function fetchText(url: string, retries = 2): Promise<string> {
@@ -43,13 +43,16 @@ function decodeEntities(s: string): string {
 
 /** Estrae il primo blocco <tag ...>...</tag> (gestisce CDATA). */
 function firstTag(xml: string, tag: string): string | null {
-  const re = new RegExp(
-    `<${tag}(?:\\s[^>]*)?>([\\s\\S]*?)</${tag}>`,
-    "i"
-  );
-  const m = re.exec(xml);
-  if (!m) return null;
-  return decodeEntities(m[1]).trim();
+  // Non attraversare altre aperture se un tag è malformato.
+  const opening = new RegExp(`<${tag}(?:\\s[^<>]*)?>`, "i").exec(xml);
+  if (!opening) return null;
+  const start = opening.index + opening[0].length;
+  // Cerca la chiusura una sola volta, anche con molte aperture senza chiusura.
+  const closing = new RegExp(`</${tag}>`, "gi");
+  closing.lastIndex = start;
+  const end = closing.exec(xml);
+  if (!end) return null;
+  return decodeEntities(xml.slice(start, end.index)).trim();
 }
 
 /** Estrae il valore di un attributo nel primo tag <tag ...>. */
