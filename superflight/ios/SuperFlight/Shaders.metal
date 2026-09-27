@@ -158,10 +158,6 @@ fragment float4 fragmentMain(VertexOut in [[stage_in]],
             col = mix(wall, pane, inGlass ? 1.0 : 0.0);
             col = mix(col, wall * 0.45, slab);
         }
-
-        // Danni da laser: annerimento crescente con il danno.
-        col *= 1.0 - in.color.a * 0.75;                    // color.a veicola il danno
-        col = mix(col, float3(0.12, 0.08, 0.06), in.color.a * 0.6);
     }
 
     // Illuminazione: sole basso (tramonto) + ombreggiatura direzionale.

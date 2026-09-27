@@ -191,26 +191,28 @@ final class Renderer: NSObject, MTKViewDelegate {
         let buf = ensure(&solidInstances, capacity: &solidCapacity, needed: n)
         let ptr = buf.contents().bindMemory(to: InstanceData.self, capacity: solidCapacity)
 
+        var count = 0
         for i in 0..<n {
             var pos = FlyVec3(); var size = FlyVec3(); var hue: Float = 0
             fly_building(Int32(i), &pos, &size, &hue)
-            let damage = max(0, min(1, size.y <= 0 ? 1 : 0))
+            if size.y <= 0 { continue }        // distrutto dal laser: sparito
             let m = MathUtil.translate(x: pos.x, y: pos.y + size.y, z: pos.z)
                 * MathUtil.scaleNonUniform(sx: size.x, sy: size.y, sz: size.z)
-            ptr[i] = InstanceData(model: m,
-                                  color: windowColor(hue: hue, height: size.y, damage: damage))
+            ptr[count] = InstanceData(model: m,
+                                      color: windowColor(hue: hue, height: size.y))
+            count += 1
         }
+        guard count > 0 else { return }
 
         enc.setVertexBuffer(buf, offset: 0, index: 2)
-        var count = Int32(n)
-        enc.setVertexBytes(&count, length: MemoryLayout<Int32>.stride, index: 3)
+        var c = Int32(count)
+        enc.setVertexBytes(&c, length: MemoryLayout<Int32>.stride, index: 3)
         enc.drawPrimitives(type: .triangle, vertexStart: 0, vertexCount: 36,
-                           instanceCount: n)
+                           instanceCount: count)
     }
 
-    private func windowColor(hue: Float, height: Float, damage: Float) -> SIMD4<Float> {
-        let body = SIMD4<Float>(0.52, 0.54, 0.58, 1)   // cemento/torri vive
-        return SIMD4<Float>(body.x, body.y, body.z, damage)
+    private func windowColor(hue: Float, height: Float) -> SIMD4<Float> {
+        return SIMD4<Float>(0.52, 0.54, 0.58, 1)   // cemento; le finestre le fa lo shader
     }
 
     // ------------------------------------------------------------ //
