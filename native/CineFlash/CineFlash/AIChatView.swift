@@ -117,7 +117,7 @@ struct ChatView: View {
                     messages.append(AIService.ChatMessage(role: "assistant", content: local))
                     thinkText = "Risposta generata offline con il modello scaricato"
                 } else {
-                    self.error = "AI cloud non raggiungibile. Scarica un modello nella tab Modelli per usare l'AI offline, o riprova tra poco."
+                    self.error = "\(error.localizedDescription) Puoi scaricare un modello nella tab Modelli per usare la modalità offline."
                 }
             }
             streaming = false
