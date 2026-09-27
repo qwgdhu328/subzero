@@ -47,15 +47,22 @@
 
 ## Prossimi task (in ordine, con stima)
 
-1. **[45 min] Audio minimal**: effetti senza asset esterni via AVAudioEngine — laser (tono
-   rovesciato), esplosioni (rumore filtrato), passi, vento in volo. Toggle audio nell'HUD
-   (aggiungere anche una riga nel pannello IMPOSTAZIONI già esistente).
-2. **[40 min] Esplosioni migliori**: quando un edificio collassa, detriti (particelle con
-   gravità e rimbalzo sul terreno) + colonna di fumo + onda d'urto della camera.
-3. **[60 min] Droni nemici**: volano nella città, sparano proiettili lenti, distruttibili con
-   un colpo di laser (+50 punti); punteggio salvato nel best.
-4. **[30 min] Minimappa HUD**: posizione Superman, NPC, anelli e edifici danneggiati.
-5. **[20 min] README**: istruzioni installazione IPA (Sideloadly/AltStore) e comandi CI.
+> Roadmap adattata dal "Documento di architettura Project Superman" (design AAA): le idee
+> grandi (Voronoi destruction, SPH, SVO pathfinding, nuvole volumetriche) sono riportate qui
+> in versione fattibile per il nostro engine Metal/iOS. Le versioni complete restano fuori
+> scope per un engine custom su iPhone.
+
+1. **[45 min] Audio minimal**: effetti senza asset esterni via AVAudioEngine — laser,
+   esplosioni, passi, vento in volo, **boom sonico**. Toggle nel pannello IMPOSTAZIONI.
+2. **[40 min] Effetto velocità (da §2.3)**: linee di vento/steak alle alte velocità,
+   aberrazione simulata con vignette dinamica, turbo-roll della camera sopra Mach 1.
+3. **[60 min] Droni nemici (da §6.1, semplificato)**: volano con steering Basilare (senza
+   SVO), sparano proiettili lenti, distruttibili col laser (+50 punti); i detriti usano
+   il sistema Debris già presente.
+4. **[30 min] Minimappa HUD**: Superman, NPC, anelli, edifici danneggiati.
+5. **[20 min] README**: installazione IPA (Sideloadly/AltStore) + comandi CI.
+6. **[45 min, opzionale] Soffio congelante (da §4.2, semplificato)**: jet di particelle
+   azzurre che congela gli NPC in posa rigida per 5 s (versione toy del sistema SPH).
 
 > Nota settings (fatto, commit 73b08ca): il pannello IMPOSTAZIONI è raggiungibile col
 > pulsante ⚙ nel menu. Qualità Alta/Media/Lite cambia limiti NPC/particelle (via
@@ -74,3 +81,8 @@
 - [x] Blindatura anti-crash: bound renderer + drawParticles buffer coerente (73b08ca)
 - [x] IMPOSTAZIONI: qualità grafica Alta/Media/Lite, sensibilità joystick, 60/120 FPS,
       persistite in UserDefaults e applicabili al volo (73b08ca, run CI 36288970870 verde)
+- [x] Animazioni cinematiche: corsa con bounce/gomiti, fase dal motore, volo 3000 km/h (1c8d819)
+- [x] Boom sonico a Mach 1: FOV dinamico 70→102°, shockwave anello, vetri che scoppano,
+      shake + burst (87fdef2, run CI 36290007626 verde)
+- [x] Detriti fisici dal collasso edifici: gravità, rimbalzo smorzato, tumble, despawn
+      (MAX_DEBRIS 120; disegnati come cubi cemento con rotazione)

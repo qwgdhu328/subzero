@@ -118,6 +118,44 @@ void GameStateData::setLimits(int maxNpcs, int maxParticles) {
     particleLimit = maxParticles > 0 ? std::min(maxParticles, MAX_PARTICLES) : 0;
 }
 
+// Detriti: cubetti con gravità e rimbalzo smorzato sulla strada (§3.2, versione CPU).
+void GameStateData::spawnDebris(const Vec3& pos, int n) {
+    for (int i = 0; i < n && (int)debris.size() < MAX_DEBRIS; ++i) {
+        Debris d;
+        d.pos = pos + Vec3(rnd(-12, 12), rnd(-4, 6), rnd(-12, 12));
+        d.vel = Vec3(rnd(-1, 1), rnd(0.2f, 1.0f), rnd(-1, 1)).normalized() * rnd(10, 34);
+        d.size = Vec3(rnd(0.8f, 2.4f), rnd(0.8f, 2.4f), rnd(0.8f, 2.4f));
+        d.spinAxis = rnd(0.0f, TAU);
+        d.spinRate = rnd(2.0f, 7.0f);
+        d.spin = 0;
+        d.rest = 3.5f;
+        d.active = true;
+        debris.push_back(d);
+    }
+}
+
+void GameStateData::updateDebris(double dt) {
+    const float dts = (float)dt;
+    for (auto& d : debris) {
+        if (!d.active) continue;
+        d.vel.y -= 26.0f * dts;                       // gravità da gioco (non 9.81: più leggibile)
+        d.pos = d.pos + d.vel * dts;
+        d.spin += d.spinRate * dts;
+        if (d.pos.y <= d.size.y) {                    // impatto strada: rimbalzo smorzato
+            d.pos.y = d.size.y;
+            d.vel.y *= -0.3f;
+            d.vel.x *= 0.7f; d.vel.z *= 0.7f;
+            if (d.vel.lengthSq() < 0.4f) {
+                d.vel = Vec3();
+                d.rest -= dts;                        // fermo: despawn dopo 3.5 s
+                if (d.rest <= 0) d.active = false;
+            }
+        }
+    }
+    debris.erase(std::remove_if(debris.begin(), debris.end(),
+        [](const Debris& d) { return !d.active; }), debris.end());
+}
+
 void GameStateData::spawnNpcs() {
     // Popola le strade attorno al giocatore; rispetta il limite di qualità.
     npcs.clear();
@@ -237,6 +275,7 @@ void GameStateData::update(double dt, int32_t, int32_t) {
         updateWalking(dt);
     } else if (state == GameState::Crashed) updateCrashed(dt);
     updateNpcs(dt);
+    updateDebris(dt);
     updateParticles(dt);
     shake = std::max(0.0f, shake - (float)dt * 1.6f);
     ++frames;
@@ -426,6 +465,7 @@ void GameStateData::updateLaser(double dt) {
             b.damage = 1.0f;
             score += 25;
             spawnBurst(laserEnd, 55, 0.02f);   // esplosione arancio
+            spawnDebris(Vec3(b.pos.x, b.size.y * 0.7f, b.pos.z), 26);  // detriti dal collasso
             shake = std::max(shake, 0.35f);
         } else if (frames % 3 == 0) {
             spawnBurst(laserEnd, 2, 0.02f);    // scintille d'impatto
@@ -522,6 +562,7 @@ void GameStateData::reset(int best) {
     rings.clear();
     particles.clear();
     npcs.clear();
+    debris.clear();
     chunks.clear();
     nextSpawnZ = -400.0f;
     frames = 0;

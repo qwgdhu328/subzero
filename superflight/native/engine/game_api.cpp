@@ -137,6 +137,18 @@ void fly_laser(FlyVec3* eye, FlyVec3* end, int32_t* active, float* heat) {
     if (heat) *heat = g->laserHeat;
 }
 
+int32_t fly_debris_count(void) { return g ? (int32_t)g->debris.size() : 0; }
+
+void fly_debris(int32_t i, FlyVec3* pos, FlyVec3* size, float* spin,
+                float* spinAxis) {
+    if (!g || i < 0 || i >= (int32_t)g->debris.size()) return;
+    const Debris& d = g->debris[i];
+    if (pos) *pos = v3(d.pos);
+    if (size) *size = v3(d.size);
+    if (spin) *spin = d.spin;
+    if (spinAxis) *spinAxis = d.spinAxis;
+}
+
 int32_t fly_npc_count(void) { return g ? (int32_t)g->npcs.size() : 0; }
 
 void fly_npc(int32_t i, FlyVec3* pos, float* yaw, float* phase,

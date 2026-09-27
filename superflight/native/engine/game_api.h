@@ -64,6 +64,11 @@ int32_t fly_laser_seg_count(void);
 void    fly_laser_seg(int32_t i, FlyVec3* a, FlyVec3* b, float* width,
                       float* life01);
 
+// Detriti fisici (per il renderer)
+int32_t fly_debris_count(void);
+void    fly_debris(int32_t i, FlyVec3* pos, FlyVec3* size, float* spin,
+                   float* spinAxis);
+
 // Pedoni NPC (per il renderer)
 int32_t fly_npc_count(void);
 void    fly_npc(int32_t i, FlyVec3* pos, float* yaw, float* phase,

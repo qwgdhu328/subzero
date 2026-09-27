@@ -13,6 +13,7 @@ constexpr int MAX_BUILDINGS = 380;
 constexpr int MAX_RINGS = 40;
 constexpr int MAX_LASER_SEGS = 48;   // scie residue dei raggi oculari
 constexpr int MAX_NPCS = 40;         // pedoni simulati (limite da impostazioni)
+constexpr int MAX_DEBRIS = 120;      // detriti fisici simultanei
 constexpr int MAX_PARTICLES = 600;   // limite particelle da impostazioni
 constexpr int CITY_GRID = 8;          // 8x8 blocchi città
 constexpr float BLOCK = 120.0f;       // metri per blocco città
@@ -47,6 +48,18 @@ struct Particle {
     float maxLife;
     float size;
     float hue;
+};
+
+// Detriti fisici (§3.2 del design): cadono con gravità e rimbalzano sulla strada.
+struct Debris {
+    Vec3 pos;
+    Vec3 vel;
+    Vec3 size;        // mezzo-lato del cubetto (0.8..2.5 m)
+    float spinAxis;   // asse di rotazione casuale per il tumble
+    float spinRate;
+    float spin;
+    float rest;       // tempo di riposo rimanente (poi despawn)
+    bool active;
 };
 
 // Pedone NPC: cammina per le strade, scappa se un raggio gli passa vicino.
@@ -115,6 +128,7 @@ struct GameStateData {
     std::vector<Building> buildings;
     std::vector<Ring> rings;
     std::vector<Particle> particles;
+    std::vector<Debris> debris;
     std::vector<Npc> npcs;
     std::vector<std::pair<Vec3, Vec3>> chunks; // (min, max) per collisioni rapide
     float nextSpawnZ = -400.0f;
@@ -140,6 +154,8 @@ struct GameStateData {
     void spawnChunk();
     void spawnRing(const Vec3& pos);
     void spawnBurst(const Vec3& pos, int n, float hue);
+    void spawnDebris(const Vec3& pos, int n);
+    void updateDebris(double dt);
     void spawnNpcs();
     void updateNpcs(double dt);
     void recycleWorld();

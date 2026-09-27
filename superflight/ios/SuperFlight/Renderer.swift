@@ -154,6 +154,7 @@ final class Renderer: NSObject, MTKViewDelegate {
         drawClouds(enc: enc)
         drawHero(enc: enc)
         drawNpcs(enc: enc)
+        drawDebris(enc: enc)
         drawRings(enc: enc)
         drawLaser(enc: enc)
         drawParticles(enc: enc)
@@ -670,6 +671,34 @@ final class Renderer: NSObject, MTKViewDelegate {
                 drawPart(enc, am, shirt, sphere: false)
             }
         }
+    }
+
+    // ------------------------------------------------------------ //
+    //  Detriti: cubetti di cemento con tumble che cadono e restano a terra
+
+    private func drawDebris(enc: MTLRenderCommandEncoder) {
+        let n = Int(fly_debris_count())
+        guard n > 0 else { return }
+        let buf = ensure(&solidInstances, capacity: &solidCapacity, needed: n)
+        let ptr = buf.contents().bindMemory(to: InstanceData.self, capacity: solidCapacity)
+
+        for i in 0..<n {
+            var pos = FlyVec3(); var size = FlyVec3()
+            var spin: Float = 0; var axis: Float = 0
+            fly_debris(Int32(i), &pos, &size, &spin, &axis)
+            let m = MathUtil.translate(x: pos.x, y: pos.y, z: pos.z)
+                * MathUtil.rotateQuat(x: 0, y: sin(spin / 2), z: 0, w: cos(spin / 2))
+                * MathUtil.rotateQuat(x: sin(axis / 2), y: 0, z: 0, w: cos(axis / 2))
+                * MathUtil.scaleNonUniform(sx: size.x, sy: size.y, sz: size.z)
+            ptr[i] = InstanceData(model: m,
+                                  color: SIMD4<Float>(0.42, 0.42, 0.44, 1))   // cemento
+        }
+        enc.setRenderPipelineState(pipelineCity)
+        enc.setDepthStencilState(depthState)
+        enc.setVertexBuffer(buf, offset: 0, index: 2)
+        var c = Int32(n)
+        enc.setVertexBytes(&c, length: MemoryLayout<Int32>.stride, index: 3)
+        enc.drawPrimitives(type: .triangle, vertexStart: 0, vertexCount: 36, instanceCount: n)
     }
 
     // ------------------------------------------------------------ //
