@@ -632,11 +632,12 @@ final class Renderer: NSObject, MTKViewDelegate {
         enc.setDepthStencilState(noDepthState)   // senza scrittura depth: evita pop
         var all: [InstanceData] = []
         for i in indices where i >= 0 && i < cloudInstances.count { all.append(cloudInstances[i]) }
-        if all.isEmpty { return }            if cloudDynamicBuffer == nil || cloudDynamicCapacity < all.count {
-                cloudDynamicCapacity = all.count * 2
-                cloudDynamicBuffer = device.makeBuffer(length: cloudDynamicCapacity * MemoryLayout<InstanceData>.stride,
-                                                       options: .storageModeShared)
-            }
+        if all.isEmpty { return }
+        if cloudDynamicBuffer == nil || cloudDynamicCapacity < all.count {
+            cloudDynamicCapacity = all.count * 2
+            cloudDynamicBuffer = device.makeBuffer(length: cloudDynamicCapacity * MemoryLayout<InstanceData>.stride,
+                                                   options: .storageModeShared)
+        }
         if let dyn = cloudDynamicBuffer {
             all.withUnsafeBytes { raw in
                 dyn.contents().copyMemory(from: raw.baseAddress!, byteCount: all.count * MemoryLayout<InstanceData>.stride)
