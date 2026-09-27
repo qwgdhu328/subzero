@@ -58,6 +58,8 @@ struct AIModelSettingsView: View {
     @State private var prefs = AIModelPrefs.load()
     @State private var testing: String? = nil
     @State private var testError: String? = nil
+    @State private var apiKeyInput = ""
+    @State private var hasAPIKey = false
 
     private let models: [(id: String, name: String)] = [
         ("auto", "🤖 Automatico (prova tutti in sequenza)"),
@@ -83,6 +85,28 @@ struct AIModelSettingsView: View {
                 Text("Modello AI").font(Theme.serif(28)).foregroundColor(Theme.text)
                 Text("Scegli quale modello gratuito OpenRouter usare per la chat e la redazione. \"Automatico\" prova tutti in sequenza fino a quando uno risponde.")
                     .font(Theme.ui(13)).foregroundColor(Theme.textDim)
+
+                VStack(alignment: .leading, spacing: 10) {
+                    Text("OPENROUTER")
+                        .font(.system(size: 12, weight: .bold)).kerning(1.2)
+                        .foregroundColor(Theme.textDim)
+                    Text(hasAPIKey ? "Chiave personale attiva per questa sessione." : "Inserisci la tua chiave personale per attivare l'AI cloud.")
+                        .font(Theme.ui(13)).foregroundColor(Theme.textDim)
+                    InputField(placeholder: "Chiave API OpenRouter", value: $apiKeyInput, secure: true)
+                        .textInputAutocapitalization(.never)
+                        .autocorrectionDisabled()
+                    PillButton(label: "Usa la chiave per questa sessione") {
+                        updateAPIKey(apiKeyInput)
+                    }
+                    .disabled(apiKeyInput.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || testing != nil)
+                    if hasAPIKey {
+                        GhostButton(label: "Rimuovi la chiave") { updateAPIKey("") }
+                            .disabled(testing != nil)
+                    }
+                    Text("La chiave resta solo in memoria e va reinserita al riavvio. Chat, test e riscrittura automatica degli articoli usano il tuo account OpenRouter; la redazione usa anche modelli a pagamento.")
+                        .font(Theme.ui(11)).foregroundColor(Theme.textDim)
+                }
+                .cardSurface()
 
                 // MARK: Selezione modello
                 VStack(alignment: .leading, spacing: 0) {
@@ -163,6 +187,20 @@ struct AIModelSettingsView: View {
         }
         .background(Theme.bg.ignoresSafeArea())
         .navigationBarHidden(true)
+        .task { hasAPIKey = await AIService.isConfigured }
+    }
+
+    private func updateAPIKey(_ value: String) {
+        apiKeyInput = ""
+        Task { @MainActor in
+            await AIService.setAPIKey(value)
+            hasAPIKey = await AIService.isConfigured
+            prefs.lastTestOk = nil
+            prefs.lastTestAt = nil
+            prefs.lastTestLatencyMs = nil
+            prefs.save()
+            testError = nil
+        }
     }
 
     private func modelName(_ id: String) -> String {

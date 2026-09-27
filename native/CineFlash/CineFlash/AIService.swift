@@ -1,18 +1,29 @@
 import Foundation
 
-private extension Data {
-    func decodeUTF8() -> String { String(data: self, encoding: .utf8) ?? "" }
-}
-
-// MARK: - AI gratuita nel cloud (OpenRouter) — porting di cloudAI.ts + aiNews.ts
+// MARK: - AI nel cloud (OpenRouter)
 
 enum AIService {
-    /// Chiave di servizio incorporata in base64 (requisito push protection).
-    private static let apiKeyB64 =
-        "c2stb3ItdjEtZWYxNGEyMGJjMjYxZTIwZGU4ZTNiMTQzYzhlMmY0ZDg2Yzk4ZjRmNmIxZGU1NDYwMTAwOGE1OTM5YjJjZTE5OQ=="
-    private static var apiKey: String {
-        Data(Data(base64Encoded: apiKeyB64) ?? Data()).decodeUTF8()
+    /// Solo la chiave personale inserita dall'utente, tenuta in memoria per la sessione.
+    /// Non aggiungere credenziali condivise al codice o alla configurazione dell'app.
+    private actor SessionCredentials {
+        var apiKey: String?
+
+        func setAPIKey(_ value: String) {
+            let key = value.trimmingCharacters(in: .whitespacesAndNewlines)
+            apiKey = key.isEmpty ? nil : key
+        }
     }
+
+    private static let credentials = SessionCredentials()
+
+    static var isConfigured: Bool {
+        get async { await credentials.apiKey != nil }
+    }
+
+    static func setAPIKey(_ value: String) async {
+        await credentials.setAPIKey(value)
+    }
+
     private static let endpoint = "https://openrouter.ai/api/v1/chat/completions"
 
     /// Modelli gratuiti provati in ordine: il primo che risponde vince.
@@ -92,6 +103,10 @@ enum AIService {
     }
 
     private static func post(_ body: Body) async throws -> (Data, HTTPURLResponse) {
+        guard let apiKey = await credentials.apiKey else {
+            throw NSError(domain: "AIService", code: 2,
+                          userInfo: [NSLocalizedDescriptionKey: "Inserisci la tua chiave OpenRouter in Impostazioni → Modello AI per usare l'AI cloud."])
+        }
         var req = URLRequest(url: URL(string: endpoint)!)
         req.httpMethod = "POST"
         req.setValue("Bearer \(apiKey)", forHTTPHeaderField: "Authorization")
@@ -169,6 +184,7 @@ enum AIService {
     }
 
     static func rewriteArticle(_ item: NewsItem) async -> AiArticle? {
+        guard await isConfigured else { return nil }
         // 1) Scarica l'HTML originale per testo e immagini
         var articleText: String?
         var images: [String] = []
